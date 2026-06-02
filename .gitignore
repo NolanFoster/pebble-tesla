@@ -1,0 +1,25 @@
+# Pebble build artifacts
+build/
+*.pbw
+.pebble-cache/
+
+# Node (PebbleKit JS tooling)
+node_modules/
+npm-debug.log*
+
+# Python (waf/SDK)
+*.pyc
+__pycache__/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Local secrets — never commit a real token
+*.local
+secrets.json
+
+# The packaged zip (regenerate as needed)
+tesla-pebble.zip
