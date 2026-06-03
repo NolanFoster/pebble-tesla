@@ -16,6 +16,11 @@ var CMD = {
 
 var API_BASE = 'https://api.tessie.com';
 
+// Post-command state polling (see refreshAfterCommand).
+var REFRESH_FIRST_MS = 800;   // wait before the first read after a command
+var REFRESH_RETRY_MS = 1500;  // gap between subsequent reads while state lags
+var REFRESH_MAX_READS = 4;    // give up after this many reads (~5s of polling)
+
 // ---- Config persisted via localStorage (set by config page) ----
 function getConfig() {
   return {
@@ -89,40 +94,66 @@ function refreshVehicleData(awake) {
   tessie('GET', '/state?use_cache=false', function (err, s) {
     if (err) { sendError(err); return; }
     if (!s) { sendError('No state'); return; }
-
-    var cfg = getConfig();
-    var charge = s.charge_state || {};
-    var climate = s.climate_state || {};
-    var vehicle = s.vehicle_state || {};
-
-    // User-set vehicle name. `display_name` is the top-level Tesla/Tessie field;
-    // fall back to vehicle_state.vehicle_name. Truncate at a codepoint boundary so
-    // multi-byte sequences (e.g. emoji) are never split mid-character.
-    var name = s.display_name || vehicle.vehicle_name || '';
-    name = Array.from(name).slice(0, 24).join('');
-
-    var insideC = Math.round(climate.inside_temp != null ? climate.inside_temp : 0);
-    var targetC = Math.round(climate.driver_temp_setting != null
-      ? climate.driver_temp_setting : cfg.lastTarget);
-
-    // remember target so +/- has a base even before next refresh
-    localStorage.setItem('last_target', String(targetC));
-
-    function maybeF(c) { return cfg.useFahrenheit ? Math.round(c * 9 / 5 + 32) : c; }
-
-    sendToWatch({
-      BATTERY:     charge.battery_level != null ? charge.battery_level : 0,
-      RANGE:       charge.battery_range != null ? Math.round(charge.battery_range) : 0,
-      LOCKED:      vehicle.locked ? 1 : 0,
-      CLIMATE_ON:  climate.is_climate_on ? 1 : 0,
-      INSIDE_TEMP: maybeF(insideC),
-      TARGET_TEMP: maybeF(targetC),
-      ONLINE:      (s.state === 'online') ? 1 : 0,
-      AWAKE:       awake,
-      NAME:        name
-    });
+    pushState(s, awake);
   });
 }
+
+// Map a Tessie /state object onto the watch's message keys and send it.
+function pushState(s, awake) {
+  var cfg = getConfig();
+  var charge = s.charge_state || {};
+  var climate = s.climate_state || {};
+  var vehicle = s.vehicle_state || {};
+
+  // User-set vehicle name. `display_name` is the top-level Tesla/Tessie field;
+  // fall back to vehicle_state.vehicle_name. Truncate at a codepoint boundary so
+  // multi-byte sequences (e.g. emoji) are never split mid-character.
+  var name = s.display_name || vehicle.vehicle_name || '';
+  name = Array.from(name).slice(0, 24).join('');
+
+  var insideC = Math.round(climate.inside_temp != null ? climate.inside_temp : 0);
+  var targetC = Math.round(climate.driver_temp_setting != null
+    ? climate.driver_temp_setting : cfg.lastTarget);
+
+  // remember target so +/- has a base even before next refresh
+  localStorage.setItem('last_target', String(targetC));
+
+  function maybeF(c) { return cfg.useFahrenheit ? Math.round(c * 9 / 5 + 32) : c; }
+
+  sendToWatch({
+    BATTERY:     charge.battery_level != null ? charge.battery_level : 0,
+    RANGE:       charge.battery_range != null ? Math.round(charge.battery_range) : 0,
+    LOCKED:      vehicle.locked ? 1 : 0,
+    CLIMATE_ON:  climate.is_climate_on ? 1 : 0,
+    INSIDE_TEMP: maybeF(insideC),
+    TARGET_TEMP: maybeF(targetC),
+    ONLINE:      (s.state === 'online') ? 1 : 0,
+    AWAKE:       awake,
+    NAME:        name
+  });
+}
+
+// After a command, the car's reported state can lag the change by a few seconds
+// even with wait_for_completion=true, so a single read often echoes the OLD
+// value. Re-read /state up to REFRESH_MAX_READS times, REFRESH_RETRY_MS apart,
+// pushing each read to the watch and stopping early once `isSettled(state)` is
+// true. The car is awake here (we just commanded it), so we skip the /status
+// precheck and report AWAKE_AWAKE. `isSettled` is optional: when absent (e.g.
+// frunk/trunk, which have no status row), the first read is enough.
+function refreshAfterCommand(isSettled, readsLeft) {
+  tessie('GET', '/state?use_cache=false', function (err, s) {
+    if (err) { sendError(err); return; }
+    if (!s) { sendError('No state'); return; }
+    pushState(s, 1 /* AWAKE_AWAKE */);
+    if (isSettled && !isSettled(s) && readsLeft > 1) {
+      setTimeout(function () { refreshAfterCommand(isSettled, readsLeft - 1); }, REFRESH_RETRY_MS);
+    }
+  });
+}
+
+// Predicates describing the state a command is expected to produce.
+function isLocked(s)    { return !!(s.vehicle_state && s.vehicle_state.locked); }
+function isClimateOn(s) { return !!(s.climate_state && s.climate_state.is_climate_on); }
 
 // ---- Command dispatch ----
 // Tesla commands only succeed when the car is awake. Check status; if it isn't
@@ -141,7 +172,7 @@ function ensureAwake(then) {
   });
 }
 
-function doCommand(path, okMsg) {
+function doCommand(path, okMsg, isSettled) {
   ensureAwake(function () {
     tessie('POST', path + '?wait_for_completion=true', function (err, data) {
       if (err) { sendError(err); return; }
@@ -150,8 +181,10 @@ function doCommand(path, okMsg) {
         return;
       }
       sendToWatch({ STATUS: okMsg });
-      // re-read state so the watch reflects reality
-      setTimeout(refreshState, 800);
+      // re-read state until it reflects the command (Tesla's report can lag)
+      setTimeout(function () {
+        refreshAfterCommand(isSettled, REFRESH_MAX_READS);
+      }, REFRESH_FIRST_MS);
     });
   });
 }
@@ -166,7 +199,12 @@ function setTemperature(deltaC) {
     tessie('POST', '/command/set_temperature?temperature=' + next, function (err, data) {
       if (err) { sendError(err); return; }
       sendToWatch({ STATUS: 'Set ' + next + '°C' });
-      setTimeout(refreshState, 800);
+      setTimeout(function () {
+        refreshAfterCommand(function (s) {
+          return s.climate_state &&
+            Math.round(s.climate_state.driver_temp_setting) === next;
+        }, REFRESH_MAX_READS);
+      }, REFRESH_FIRST_MS);
     });
   });
 }
@@ -174,10 +212,10 @@ function setTemperature(deltaC) {
 function handleCommand(code) {
   switch (code) {
     case CMD.REFRESH:     refreshState(); break;
-    case CMD.LOCK:        doCommand('/command/lock', 'Locked'); break;
-    case CMD.UNLOCK:      doCommand('/command/unlock', 'Unlocked'); break;
-    case CMD.CLIMATE_ON:  doCommand('/command/start_climate', 'Climate on'); break;
-    case CMD.CLIMATE_OFF: doCommand('/command/stop_climate', 'Climate off'); break;
+    case CMD.LOCK:        doCommand('/command/lock', 'Locked', isLocked); break;
+    case CMD.UNLOCK:      doCommand('/command/unlock', 'Unlocked', function (s) { return !isLocked(s); }); break;
+    case CMD.CLIMATE_ON:  doCommand('/command/start_climate', 'Climate on', isClimateOn); break;
+    case CMD.CLIMATE_OFF: doCommand('/command/stop_climate', 'Climate off', function (s) { return !isClimateOn(s); }); break;
     case CMD.FRUNK:       doCommand('/command/activate_front_trunk', 'Frunk'); break;
     case CMD.TRUNK:       doCommand('/command/activate_rear_trunk', 'Trunk'); break;
     case CMD.CHARGE_PORT: doCommand('/command/open_charge_port', 'Charge port'); break;

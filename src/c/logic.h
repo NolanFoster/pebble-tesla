@@ -56,6 +56,25 @@ void fmt_lock_subtitle(const VehicleState *s, char *out, size_t n);
 void fmt_climate_subtitle(const VehicleState *s, char *out, size_t n);
 void fmt_power_subtitle(const VehicleState *s, char *out, size_t n);
 
+// Battery gauge text, split so the percentage can sit inside a circular gauge
+// and the range just beneath it. `out` is always NUL-terminated.
+void fmt_battery_pct(const VehicleState *s, char *out, size_t n);  // "84%" or "—"
+void fmt_range(const VehicleState *s, char *out, size_t n);        // "240 mi" or ""
+
+// Battery percentage as bare digits, for the LECO numbers-only hero font (which
+// has no '%' glyph — the percent sign is drawn separately). "84" or "—".
+void fmt_battery_num(const VehicleState *s, char *out, size_t n);
+
+// Charge level bucket, used to color the battery gauge arc. Returned as an enum
+// (not a GColor) so this stays host-testable without <pebble.h>.
+typedef enum {
+  BATTERY_UNKNOWN = -1,  // battery < 0
+  BATTERY_LOW     = 0,   // <= 20%
+  BATTERY_MED,           // <= 50%
+  BATTERY_HIGH,          // > 50%
+} BatteryLevel;
+BatteryLevel battery_level(int pct);
+
 // Human label for an AwakeStatus value ("Awake"/"Asleep"/"Waiting for sleep"/"—").
 const char *awake_label(int awake);
 
@@ -70,5 +89,19 @@ const char *climate_toggle_label(const VehicleState *s);  // "Climate On" / "Cli
 // Which command a toggle row should send given current state.
 int lock_toggle_cmd(const VehicleState *s);     // CMD_LOCK / CMD_UNLOCK
 int climate_toggle_cmd(const VehicleState *s);  // CMD_CLIMATE_ON / CMD_CLIMATE_OFF
+
+// Which action-bar glyph to show for the lock / climate buttons. The icon
+// reflects the *current* vehicle state (a closed padlock when locked, a running
+// fan when climate is on) so it doubles as a status indicator. Returns an enum
+// rather than a RESOURCE_ID_* so this stays host-testable (no <pebble.h>).
+typedef enum {
+  ICON_KIND_LOCKED = 0,    // doors locked
+  ICON_KIND_UNLOCKED,      // doors unlocked
+  ICON_KIND_CLIMATE_ON,    // climate running
+  ICON_KIND_CLIMATE_OFF,   // climate off
+} IconKind;
+
+IconKind lock_toggle_icon(const VehicleState *s);     // ICON_KIND_LOCKED / _UNLOCKED
+IconKind climate_toggle_icon(const VehicleState *s);  // ICON_KIND_CLIMATE_ON / _OFF
 
 #endif // LOGIC_H

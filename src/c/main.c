@@ -31,15 +31,32 @@ static char     s_name[100]   = "";   // vehicle name (UTF-8; room for ~24 emoji
 static char     s_error[64]   = "";
 
 // ---- UI ----
-static Window      *s_main_window;
-static MenuLayer   *s_menu_layer;
-static Window      *s_status_window;   // transient "Sending…" / result overlay
+static Window         *s_main_window;
+static Layer          *s_card_layer;     // custom-drawn status "card" (left of action bar)
+static ActionBarLayer *s_action_bar;     // lock (up) / settings (select) / climate (down)
+static GBitmap        *s_icon_locked, *s_icon_unlocked, *s_icon_settings;
+static GBitmap        *s_icon_climate_on, *s_icon_climate_off;
+static GBitmap        *s_icon_temp_up, *s_icon_temp_down, *s_icon_frunk;
+static GBitmap        *s_icon_trunk, *s_icon_charge, *s_icon_refresh;
+
+static Window      *s_controls_window;   // "More Controls" sub-window (select button)
+static MenuLayer   *s_controls_menu;
+
+static Window      *s_status_window;     // transient "Sending…" / result overlay
 static TextLayer   *s_status_text;
 static char         s_status_buf[64];
 static AppTimer    *s_status_timer;
 
+// Battery-fill animation: the gauge draws from s_anim_pct, which eases from the
+// previous value to s_battery whenever a fresh reading arrives.
+static int          s_anim_pct  = -1;    // value the gauge currently renders (-1 = none yet)
+static int          s_anim_from = 0;
+static int          s_anim_to   = 0;
+
 // Forward decls
 static void send_command(TeslaCommand cmd, int arg);
+static void update_action_bar_icons(void);
+static void push_controls_window(void);
 
 // ---------------------------------------------------------------------------
 // Transient status overlay
@@ -55,7 +72,7 @@ static void status_window_load(Window *w) {
   GRect b = layer_get_bounds(root);
   s_status_text = text_layer_create(GRect(0, (b.size.h - 40) / 2, b.size.w, 40));
   text_layer_set_text(s_status_text, s_status_buf);
-  text_layer_set_font(s_status_text, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
+  text_layer_set_font(s_status_text, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
   text_layer_set_text_alignment(s_status_text, GTextAlignmentCenter);
   text_layer_set_background_color(s_status_text, GColorClear);
   layer_add_child(root, text_layer_get_layer(s_status_text));
@@ -91,49 +108,6 @@ static void show_status(const char *msg, uint32_t dismiss_ms) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Menu model
-// ---------------------------------------------------------------------------
-// Section 0: status (read-only rows)   Section 1: actions
-enum { SEC_STATUS = 0, SEC_ACTIONS = 1, NUM_SECTIONS };
-
-enum {
-  ROW_POWER = 0,        // awake / asleep / waiting for sleep
-  ROW_BATTERY,
-  ROW_LOCK_STATE,
-  ROW_CLIMATE_STATE,
-  NUM_STATUS_ROWS
-};
-
-enum {
-  ACT_LOCK_TOGGLE = 0,
-  ACT_CLIMATE_TOGGLE,
-  ACT_TEMP_UP,
-  ACT_TEMP_DOWN,
-  ACT_FRUNK,
-  ACT_TRUNK,
-  ACT_CHARGE_PORT,
-  ACT_REFRESH,
-  NUM_ACTION_ROWS
-};
-
-static uint16_t menu_num_sections(MenuLayer *ml, void *ctx) {
-  return NUM_SECTIONS;
-}
-
-static uint16_t menu_num_rows(MenuLayer *ml, uint16_t section, void *ctx) {
-  return section == SEC_STATUS ? NUM_STATUS_ROWS : NUM_ACTION_ROWS;
-}
-
-static int16_t menu_header_height(MenuLayer *ml, uint16_t section, void *ctx) {
-  return MENU_CELL_BASIC_HEADER_HEIGHT;
-}
-
-static void menu_draw_header(GContext *gctx, const Layer *cell, uint16_t section, void *ctx) {
-  menu_cell_basic_header_draw(gctx, cell,
-    section == SEC_STATUS ? status_header_text(s_name) : "Controls");
-}
-
 // Snapshot the cached globals into a VehicleState for the pure logic helpers.
 static VehicleState current_state(void) {
   return (VehicleState){
@@ -144,96 +118,413 @@ static VehicleState current_state(void) {
   };
 }
 
-static void menu_draw_row(GContext *gctx, const Layer *cell,
-                          MenuIndex *idx, void *ctx) {
-  char title[40];
-  char subtitle[40];
-  title[0] = subtitle[0] = '\0';
-
-  VehicleState st = current_state();
-
-  if (idx->section == SEC_STATUS) {
-    switch (idx->row) {
-      case ROW_POWER:
-        snprintf(title, sizeof(title), "Vehicle");
-        fmt_power_subtitle(&st, subtitle, sizeof(subtitle));
-        break;
-      case ROW_BATTERY:
-        snprintf(title, sizeof(title), "Battery");
-        fmt_battery_subtitle(&st, subtitle, sizeof(subtitle));
-        break;
-      case ROW_LOCK_STATE:
-        snprintf(title, sizeof(title), "Doors");
-        fmt_lock_subtitle(&st, subtitle, sizeof(subtitle));
-        break;
-      case ROW_CLIMATE_STATE:
-        snprintf(title, sizeof(title), "Climate");
-        fmt_climate_subtitle(&st, subtitle, sizeof(subtitle));
-        break;
-    }
-    menu_cell_basic_draw(gctx, cell, title, subtitle, NULL);
-    return;
-  }
-
-  // Actions
-  switch (idx->row) {
-    case ACT_LOCK_TOGGLE:    snprintf(title, sizeof(title), "%s", lock_toggle_label(&st)); break;
-    case ACT_CLIMATE_TOGGLE: snprintf(title, sizeof(title), "%s", climate_toggle_label(&st)); break;
-    case ACT_TEMP_UP:        snprintf(title, sizeof(title), "Temp +1°"); break;
-    case ACT_TEMP_DOWN:      snprintf(title, sizeof(title), "Temp -1°"); break;
-    case ACT_FRUNK:          snprintf(title, sizeof(title), "Open Frunk"); break;
-    case ACT_TRUNK:          snprintf(title, sizeof(title), "Open Trunk"); break;
-    case ACT_CHARGE_PORT:    snprintf(title, sizeof(title), "Charge Port"); break;
-    case ACT_REFRESH:        snprintf(title, sizeof(title), "Refresh"); break;
-  }
-  menu_cell_basic_draw(gctx, cell, title, NULL, NULL);
+// ---------------------------------------------------------------------------
+// Battery-fill animation
+// ---------------------------------------------------------------------------
+static void batt_anim_update(Animation *a, const AnimationProgress p) {
+  s_anim_pct = s_anim_from + (s_anim_to - s_anim_from) * p / ANIMATION_NORMALIZED_MAX;
+  if (s_card_layer) layer_mark_dirty(s_card_layer);
 }
 
-static void menu_select(MenuLayer *ml, MenuIndex *idx, void *ctx) {
-  if (idx->section == SEC_STATUS) {
-    // tapping a status row refreshes
-    send_command(CMD_REFRESH, 0);
-    show_status("Refreshing…", 0);
+static const AnimationImplementation s_batt_anim_impl = {
+  .update = batt_anim_update,
+};
+
+// Ease the gauge from its current value to `to`. Snaps (no animation) on the
+// very first known reading so the card doesn't sweep up from 0 on launch. The
+// scheduled animation is owned and auto-destroyed by the framework; we never
+// retain the pointer, and cancel any in-flight sweep with unschedule_all.
+static void animate_battery_to(int to) {
+  animation_unschedule_all();
+  if (s_anim_pct < 0 || to < 0) {        // first/unknown reading: just snap
+    s_anim_pct = to;
+    if (s_card_layer) layer_mark_dirty(s_card_layer);
     return;
   }
+  s_anim_from = s_anim_pct;
+  s_anim_to   = to;
+  Animation *a = animation_create();
+  animation_set_implementation(a, &s_batt_anim_impl);
+  animation_set_duration(a, 600);
+  animation_set_curve(a, AnimationCurveEaseOut);
+  animation_schedule(a);
+}
+
+// ---------------------------------------------------------------------------
+// Status card (left of the action bar)
+//
+// Visual language: Frank Lloyd Wright / Usonian. A warm earthy palette on a
+// black ground, a large geometric (LECO) battery "hero" ring, and an art-glass
+// ornament band of stepped squares separating the hero from the status rows.
+// ---------------------------------------------------------------------------
+
+// Cherokee-Red signature accent — the single action color (action bar, menu
+// highlight). On 1-bit displays there is no accent (handled at call sites).
+#define ACCENT_COLOR PBL_IF_COLOR_ELSE(GColorRoseVale, GColorWhite)
+
+#if defined(PBL_COLOR)
+// Battery arc: a natural clay -> ochre -> olive gradient rather than RGB.
+static GColor battery_arc_color(int battery) {
+  switch (battery_level(battery)) {
+    case BATTERY_LOW:  return GColorRoseVale;      // clay-red
+    case BATTERY_MED:  return GColorChromeYellow;  // ochre / gold
+    case BATTERY_HIGH: return GColorArmyGreen;     // olive / forest
+    default:           return GColorWindsorTan;    // unknown — earthy neutral
+  }
+}
+#endif
+
+// Circular battery gauge: a ring whose filled arc tracks the charge level, with
+// the charge percentage as a big geometric (LECO) number centered inside. The
+// arc sweeps clockwise from 12 o'clock (graphics_fill_radial's 0 angle). `pct`
+// is passed in (rather than read from st) so the fill animation can drive it;
+// the *known/unknown* distinction still comes from st->battery.
+static void draw_battery_gauge(GContext *gctx, GRect box, const VehicleState *st, int pct) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  const uint16_t thick = PBL_IF_ROUND_ELSE(8, 7);
+  const int32_t end = TRIG_MAX_ANGLE * pct / 100;
+
+#if defined(PBL_COLOR)
+  graphics_context_set_fill_color(gctx, GColorWindsorTan);                // track
+  graphics_fill_radial(gctx, box, GOvalScaleModeFitCircle, thick, 0, TRIG_MAX_ANGLE);
+  graphics_context_set_fill_color(gctx, battery_arc_color(st->battery));  // charge
+  graphics_fill_radial(gctx, box, GOvalScaleModeFitCircle, thick, 0, end);
+#else
+  // 1-bit: a thin full track ring plus a thicker progress arc (the extra
+  // thickness, not color, conveys the level).
+  graphics_context_set_fill_color(gctx, GColorBlack);
+  graphics_fill_radial(gctx, box, GOvalScaleModeFitCircle, 2, 0, TRIG_MAX_ANGLE);
+  graphics_fill_radial(gctx, box, GOvalScaleModeFitCircle, thick, 0, end);
+#endif
+
+  // Percentage hero, centered. The LECO numbers font scales with the ring so it
+  // never collides with the arc; an unknown reading uses a GOTHIC em-dash (LECO
+  // has no dash glyph).
+  graphics_context_set_text_color(gctx, PBL_IF_COLOR_ELSE(GColorWhite, GColorBlack));
+  int16_t num_h;
+  GFont f_num;
+  if (st->battery < 0) {
+    f_num = fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD);
+    num_h = 30;
+  } else if (box.size.w >= 92) {
+    f_num = fonts_get_system_font(FONT_KEY_LECO_42_NUMBERS);
+    num_h = 42;
+  } else if (box.size.w >= 68) {
+    f_num = fonts_get_system_font(FONT_KEY_LECO_38_BOLD_NUMBERS);
+    num_h = 38;
+  } else {
+    f_num = fonts_get_system_font(FONT_KEY_LECO_28_LIGHT_NUMBERS);
+    num_h = 28;
+  }
+  char buf[16];
+  fmt_battery_num(st, buf, sizeof(buf));
+  graphics_draw_text(gctx, buf, f_num,
+    GRect(box.origin.x, box.origin.y + (box.size.h - num_h) / 2 - 4, box.size.w, num_h),
+    GTextOverflowModeFill, GTextAlignmentCenter, NULL);
+}
+
+// Art-glass ornament: a thin "prairie rule" with three ascending stepped
+// squares centered on it — Wright's Tree-of-Life motif abstracted into a few
+// primitives. Marks the compression point between the hero and the status rows.
+// Rectangular displays only (round has no room and never calls it).
+#if !defined(PBL_ROUND)
+static void draw_ornament(GContext *gctx, int16_t cx, int16_t y, int16_t w) {
+  const GColor c = PBL_IF_COLOR_ELSE(GColorBrass, GColorBlack);
+  graphics_context_set_fill_color(gctx, c);
+  graphics_fill_rect(gctx, GRect(cx - w / 2, y, w, 1), 0, GCornerNone);
+  const int16_t sz[3] = {3, 4, 5};
+  const int16_t gap = 4;
+  const int16_t total = sz[0] + sz[1] + sz[2] + 2 * gap;
+  int16_t x = cx - total / 2;
+  for (int i = 0; i < 3; i++) {
+    graphics_fill_rect(gctx, GRect(x, y - sz[i], sz[i], sz[i]), 0, GCornerNone);
+    x += sz[i] + gap;
+  }
+}
+#endif
+
+// One status line: a leading state-colored dot plus its label. On round the
+// centered layout has no room for a left dot, so the text itself is tinted; on
+// 1-bit the dot is a filled (true) or hollow (false) circle.
+static void draw_status_row(GContext *gctx, GRect content, int16_t y, int16_t h,
+                            GColor accent, bool filled, const char *text, GFont f) {
+#if defined(PBL_ROUND)
+  graphics_context_set_text_color(gctx, accent);
+  graphics_draw_text(gctx, text, f, GRect(content.origin.x, y, content.size.w, h),
+    GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
+  (void)filled;
+#else
+  const int16_t r = 4;
+  const GPoint dot = GPoint(content.origin.x + r, y + h / 2);
+#if defined(PBL_COLOR)
+  graphics_context_set_fill_color(gctx, accent);
+  graphics_fill_circle(gctx, dot, r);
+  graphics_context_set_text_color(gctx, GColorWhite);
+#else
+  if (filled) {
+    graphics_context_set_fill_color(gctx, GColorBlack);
+    graphics_fill_circle(gctx, dot, r);
+  } else {
+    graphics_context_set_stroke_color(gctx, GColorBlack);
+    graphics_draw_circle(gctx, dot, r);
+  }
+  graphics_context_set_text_color(gctx, GColorBlack);
+  (void)accent;
+#endif
+  graphics_draw_text(gctx, text, f,
+    GRect(content.origin.x + 2 * r + 6, y, content.size.w - 2 * r - 6, h),
+    GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+#endif
+}
+
+// Draws a single screenful of vehicle status: name, the battery hero, an
+// art-glass ornament band, then lock / climate / power rows. Strings come from
+// the shared logic.c formatters so the card text stays consistent with the rest
+// of the app. Layout is bounds-relative so taller screens (emery) breathe.
+static void card_update_proc(Layer *layer, GContext *gctx) {
+  GRect b = layer_get_bounds(layer);
+  VehicleState st = current_state();
+
+  GColor fg = PBL_IF_COLOR_ELSE(GColorWhite, GColorBlack);
+  const GTextAlignment align = PBL_IF_ROUND_ELSE(GTextAlignmentCenter, GTextAlignmentLeft);
+  const int16_t pad = PBL_IF_ROUND_ELSE(0, 6);
+  GRect content = GRect(b.origin.x + pad, b.origin.y,
+                        b.size.w - 2 * pad, b.size.h);
+
+  char line[40];
+  GFont f_name = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+  GFont f_body = fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
+
+  // Slot heights for the fixed elements; the battery hero flexes to fill what's
+  // left so short screens (basalt/diorite, 168px) stay tight while emery (228px)
+  // gives the hero a commanding diameter. `bot` keeps the lowest row inside the
+  // circle on round. Round wastes its corners, so it drops the power footer and
+  // shows two status rows; rectangular displays show three.
+  const int16_t y0  = PBL_IF_ROUND_ELSE(20, 6);
+  const int16_t bot = PBL_IF_ROUND_ELSE(20, 4);
+  const int16_t avail = content.size.h - bot;                // usable bottom edge offset
+  const int16_t name_slot = 28, range_slot = 18;
+  const int16_t orn_slot = PBL_IF_ROUND_ELSE(0, 8);  // no ornament on the cramped circle
+  const int16_t rows_reserve = PBL_IF_ROUND_ELSE(34, 56);
+  const int      n_rows = PBL_IF_ROUND_ELSE(2, 3);
+  int16_t diam = avail - y0 - name_slot - range_slot - orn_slot - rows_reserve;
+  const int16_t dmax = PBL_IF_ROUND_ELSE(96, 110);
+  if (diam > content.size.w - 8) diam = content.size.w - 8;  // never overflow narrow cards
+  if (diam > dmax) diam = dmax;
+  if (diam < 54) diam = 54;                                  // keep room for the LECO number
+
+  int16_t y = y0;
+
+  // Vehicle name (or "Status").
+  graphics_context_set_text_color(gctx, fg);
+  graphics_draw_text(gctx, status_header_text(s_name), f_name,
+    GRect(content.origin.x, y, content.size.w, 28),
+    GTextOverflowModeTrailingEllipsis, align, NULL);
+  y += name_slot;
+
+  // Battery hero: a bold ring, centered in the card width.
+  GRect gauge = GRect(content.origin.x + (content.size.w - diam) / 2, y, diam, diam);
+  draw_battery_gauge(gctx, gauge, &st, s_anim_pct);
+  y += diam + 2;
+
+  // Range, just beneath the ring.
+  graphics_context_set_text_color(gctx, fg);
+  fmt_range(&st, line, sizeof(line));
+  graphics_draw_text(gctx, line, f_body,
+    GRect(content.origin.x, y, content.size.w, range_slot),
+    GTextOverflowModeTrailingEllipsis, align, NULL);
+  y += range_slot;
+
+  // Art-glass ornament band: the compression point before the status rows.
+  // Skipped on round, where the circle has no room for it.
+#if !defined(PBL_ROUND)
+  draw_ornament(gctx, content.origin.x + content.size.w / 2, y + 5, content.size.w);
+#endif
+  y += orn_slot;
+
+  // Status rows distribute evenly through the remaining height (down to the
+  // bottom safe edge) so taller screens space them out instead of clustering.
+  const int16_t rows_h = content.origin.y + avail - y;
+  const int16_t pitch = rows_h / n_rows;
+  const int16_t row_h = pitch < 22 ? pitch : 22;
+
+  // Doors (lock state): green when secured, ochre when open. The color names
+  // live only in the color arm so 1-bit builds (where they're undefined and
+  // the dot is drawn black) still compile.
+  fmt_lock_subtitle(&st, line, sizeof(line));
+  draw_status_row(gctx, content, y, row_h,
+    PBL_IF_COLOR_ELSE(st.locked ? GColorArmyGreen : GColorChromeYellow, GColorBlack),
+    st.locked, line, f_body);
+  y += pitch;
+
+  // Climate (may be longer: "On  •  in 21° → 22°"): warm orange when running.
+  fmt_climate_subtitle(&st, line, sizeof(line));
+  draw_status_row(gctx, content, y, row_h,
+    PBL_IF_COLOR_ELSE(st.climate_on ? GColorOrange : GColorWindsorTan, GColorBlack),
+    st.climate_on, line, f_body);
+  y += pitch;
+
+  // Power/awake (small, footer) — rectangular displays only; round has no room.
+#if !defined(PBL_ROUND)
+  graphics_context_set_text_color(gctx, fg);
+  fmt_power_subtitle(&st, line, sizeof(line));
+  graphics_draw_text(gctx, line, fonts_get_system_font(FONT_KEY_GOTHIC_14),
+    GRect(content.origin.x, y, content.size.w, 18),
+    GTextOverflowModeTrailingEllipsis, align, NULL);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Action bar (lock = up, settings = select, climate = down)
+// ---------------------------------------------------------------------------
+static void ab_up_click(ClickRecognizerRef rec, void *ctx) {
+  VehicleState st = current_state();
+  send_command(lock_toggle_cmd(&st), 0);
+  show_status(s_locked ? "Unlocking…" : "Locking…", 0);
+}
+
+static void ab_down_click(ClickRecognizerRef rec, void *ctx) {
+  VehicleState st = current_state();
+  send_command(climate_toggle_cmd(&st), 0);
+  show_status(s_climate_on ? "Climate off…" : "Climate on…", 0);
+}
+
+static void ab_select_click(ClickRecognizerRef rec, void *ctx) {
+  push_controls_window();
+}
+
+static void action_bar_click_config(void *ctx) {
+  window_single_click_subscribe(BUTTON_ID_UP,     ab_up_click);
+  window_single_click_subscribe(BUTTON_ID_SELECT, ab_select_click);
+  window_single_click_subscribe(BUTTON_ID_DOWN,   ab_down_click);
+}
+
+// Refresh the up/down glyphs to mirror the current lock/climate state.
+static void update_action_bar_icons(void) {
+  if (!s_action_bar) return;
+  VehicleState st = current_state();
+  GBitmap *up = (lock_toggle_icon(&st) == ICON_KIND_LOCKED) ? s_icon_locked
+                                                            : s_icon_unlocked;
+  GBitmap *down = (climate_toggle_icon(&st) == ICON_KIND_CLIMATE_ON) ? s_icon_climate_on
+                                                                     : s_icon_climate_off;
+  action_bar_layer_set_icon(s_action_bar, BUTTON_ID_UP, up);
+  action_bar_layer_set_icon(s_action_bar, BUTTON_ID_SELECT, s_icon_settings);
+  action_bar_layer_set_icon(s_action_bar, BUTTON_ID_DOWN, down);
+}
+
+// ---------------------------------------------------------------------------
+// "More Controls" sub-window (opened from the SELECT button)
+// ---------------------------------------------------------------------------
+enum {
+  MC_TEMP_UP = 0,
+  MC_TEMP_DOWN,
+  MC_FRUNK,
+  MC_TRUNK,
+  MC_CHARGE_PORT,
+  MC_REFRESH,
+  MC_COUNT
+};
+
+static uint16_t mc_num_rows(MenuLayer *ml, uint16_t section, void *ctx) {
+  return MC_COUNT;
+}
+
+static int16_t mc_header_height(MenuLayer *ml, uint16_t section, void *ctx) {
+  return MENU_CELL_BASIC_HEADER_HEIGHT;
+}
+
+static void mc_draw_header(GContext *gctx, const Layer *cell, uint16_t section, void *ctx) {
+  menu_cell_basic_header_draw(gctx, cell, "More Controls");
+#if defined(PBL_COLOR)
+  // Brass "prairie rule" under the header to echo the card ornament.
+  GRect cb = layer_get_bounds((Layer *)cell);
+  graphics_context_set_fill_color(gctx, GColorBrass);
+  graphics_fill_rect(gctx, GRect(cb.origin.x, cb.origin.y + cb.size.h - 2,
+                                 cb.size.w, 2), 0, GCornerNone);
+#endif
+}
+
+static void mc_draw_row(GContext *gctx, const Layer *cell, MenuIndex *idx, void *ctx) {
+  const char *title = "";
+  GBitmap *icon = NULL;
   switch (idx->row) {
-    case ACT_LOCK_TOGGLE: {
-      VehicleState st = current_state();
-      send_command(lock_toggle_cmd(&st), 0);
-      show_status(s_locked ? "Unlocking…" : "Locking…", 0);
-      break;
-    }
-    case ACT_CLIMATE_TOGGLE: {
-      VehicleState st = current_state();
-      send_command(climate_toggle_cmd(&st), 0);
-      show_status(s_climate_on ? "Climate off…" : "Climate on…", 0);
-      break;
-    }
-    case ACT_TEMP_UP:
+    case MC_TEMP_UP:     title = "Temp +1°";    icon = s_icon_temp_up;   break;
+    case MC_TEMP_DOWN:   title = "Temp -1°";    icon = s_icon_temp_down; break;
+    case MC_FRUNK:       title = "Open Frunk";  icon = s_icon_frunk;     break;
+    case MC_TRUNK:       title = "Open Trunk";  icon = s_icon_trunk;     break;
+    case MC_CHARGE_PORT: title = "Charge Port"; icon = s_icon_charge;    break;
+    case MC_REFRESH:     title = "Refresh";     icon = s_icon_refresh;   break;
+  }
+  menu_cell_basic_draw(gctx, cell, title, NULL, icon);
+}
+
+static void mc_select(MenuLayer *ml, MenuIndex *idx, void *ctx) {
+  switch (idx->row) {
+    case MC_TEMP_UP:
       send_command(CMD_TEMP_UP, 1);
       show_status("Temp +1°…", 0);
       break;
-    case ACT_TEMP_DOWN:
+    case MC_TEMP_DOWN:
       send_command(CMD_TEMP_DOWN, -1);
       show_status("Temp -1°…", 0);
       break;
-    case ACT_FRUNK:
+    case MC_FRUNK:
       send_command(CMD_FRUNK, 0);
       show_status("Opening frunk…", 0);
       break;
-    case ACT_TRUNK:
+    case MC_TRUNK:
       send_command(CMD_TRUNK, 0);
       show_status("Opening trunk…", 0);
       break;
-    case ACT_CHARGE_PORT:
+    case MC_CHARGE_PORT:
       send_command(CMD_CHARGE_PORT, 0);
       show_status("Charge port…", 0);
       break;
-    case ACT_REFRESH:
+    case MC_REFRESH:
       send_command(CMD_REFRESH, 0);
       show_status("Refreshing…", 0);
       break;
   }
+}
+
+static void controls_window_load(Window *w) {
+  Layer *root = window_get_root_layer(w);
+  GRect b = layer_get_bounds(root);
+  s_controls_menu = menu_layer_create(b);
+  menu_layer_set_callbacks(s_controls_menu, NULL, (MenuLayerCallbacks){
+    .get_num_rows = mc_num_rows,
+    .get_header_height = mc_header_height,
+    .draw_header = mc_draw_header,
+    .draw_row = mc_draw_row,
+    .select_click = mc_select,
+  });
+  menu_layer_set_click_config_onto_window(s_controls_menu, w);
+  // Dark, cohesive theme so the white glyphs read on every row and the menu
+  // matches the card. The accent highlight is the Cherokee-Red signature.
+  menu_layer_set_normal_colors(s_controls_menu, GColorBlack, GColorWhite);
+#if defined(PBL_COLOR)
+  menu_layer_set_highlight_colors(s_controls_menu, GColorRoseVale, GColorWhite);
+#else
+  menu_layer_set_highlight_colors(s_controls_menu, GColorWhite, GColorBlack);
+#endif
+  layer_add_child(root, menu_layer_get_layer(s_controls_menu));
+}
+
+static void controls_window_unload(Window *w) {
+  menu_layer_destroy(s_controls_menu);
+  s_controls_menu = NULL;
+}
+
+static void push_controls_window(void) {
+  if (!s_controls_window) {
+    s_controls_window = window_create();
+    window_set_window_handlers(s_controls_window, (WindowHandlers){
+      .load = controls_window_load,
+      .unload = controls_window_unload,
+    });
+  }
+  window_stack_push(s_controls_window, true);
 }
 
 // ---------------------------------------------------------------------------
@@ -272,7 +563,8 @@ static void inbox_received(DictionaryIterator *it, void *ctx) {
     // A short human string confirming a command landed
     show_status(t->value->cstring, 1500);
   }
-  if ((t = dict_find(it, KEY_BATTERY)))     { s_battery = t->value->int32; got_state = true; }
+  if ((t = dict_find(it, KEY_BATTERY)))     { s_battery = t->value->int32; got_state = true;
+                                              animate_battery_to(s_battery); }
   if ((t = dict_find(it, KEY_RANGE)))       { s_range = t->value->int32; got_state = true; }
   if ((t = dict_find(it, KEY_LOCKED)))      { s_locked = t->value->int32 != 0; got_state = true; }
   if ((t = dict_find(it, KEY_CLIMATE_ON)))  { s_climate_on = t->value->int32 != 0; got_state = true; }
@@ -286,8 +578,10 @@ static void inbox_received(DictionaryIterator *it, void *ctx) {
     got_state = true;
   }
 
-  if (got_state && s_menu_layer) {
-    menu_layer_reload_data(s_menu_layer);
+  if (got_state) {
+    if (s_card_layer) layer_mark_dirty(s_card_layer);
+    update_action_bar_icons();                        // lock/climate glyph follows state
+    if (s_controls_menu) menu_layer_reload_data(s_controls_menu);
     // A fresh state read means any in-flight "Refreshing…/…ing" overlay is done.
     // Refresh replies carry no STATUS, so without this the overlay (shown with
     // dismiss_ms=0) would stay up forever and swallow further button presses.
@@ -311,32 +605,69 @@ static void outbox_sent(DictionaryIterator *it, void *ctx) {
 // ---------------------------------------------------------------------------
 // Main window
 // ---------------------------------------------------------------------------
+static void load_icons(void) {
+  s_icon_locked      = gbitmap_create_with_resource(RESOURCE_ID_ICON_LOCKED);
+  s_icon_unlocked    = gbitmap_create_with_resource(RESOURCE_ID_ICON_UNLOCKED);
+  s_icon_settings    = gbitmap_create_with_resource(RESOURCE_ID_ICON_SETTINGS);
+  s_icon_climate_on  = gbitmap_create_with_resource(RESOURCE_ID_ICON_CLIMATE_ON);
+  s_icon_climate_off = gbitmap_create_with_resource(RESOURCE_ID_ICON_CLIMATE_OFF);
+  s_icon_temp_up     = gbitmap_create_with_resource(RESOURCE_ID_ICON_TEMP_UP);
+  s_icon_temp_down   = gbitmap_create_with_resource(RESOURCE_ID_ICON_TEMP_DOWN);
+  s_icon_frunk       = gbitmap_create_with_resource(RESOURCE_ID_ICON_FRUNK);
+  s_icon_trunk       = gbitmap_create_with_resource(RESOURCE_ID_ICON_TRUNK);
+  s_icon_charge      = gbitmap_create_with_resource(RESOURCE_ID_ICON_CHARGE);
+  s_icon_refresh     = gbitmap_create_with_resource(RESOURCE_ID_ICON_REFRESH);
+}
+
+static void unload_icons(void) {
+  gbitmap_destroy(s_icon_locked);      s_icon_locked = NULL;
+  gbitmap_destroy(s_icon_unlocked);    s_icon_unlocked = NULL;
+  gbitmap_destroy(s_icon_settings);    s_icon_settings = NULL;
+  gbitmap_destroy(s_icon_climate_on);  s_icon_climate_on = NULL;
+  gbitmap_destroy(s_icon_climate_off); s_icon_climate_off = NULL;
+  gbitmap_destroy(s_icon_temp_up);     s_icon_temp_up = NULL;
+  gbitmap_destroy(s_icon_temp_down);   s_icon_temp_down = NULL;
+  gbitmap_destroy(s_icon_frunk);       s_icon_frunk = NULL;
+  gbitmap_destroy(s_icon_trunk);       s_icon_trunk = NULL;
+  gbitmap_destroy(s_icon_charge);      s_icon_charge = NULL;
+  gbitmap_destroy(s_icon_refresh);     s_icon_refresh = NULL;
+}
+
 static void main_window_load(Window *w) {
   Layer *root = window_get_root_layer(w);
   GRect b = layer_get_bounds(root);
 
-  s_menu_layer = menu_layer_create(b);
-  menu_layer_set_callbacks(s_menu_layer, NULL, (MenuLayerCallbacks){
-    .get_num_sections = menu_num_sections,
-    .get_num_rows = menu_num_rows,
-    .get_header_height = menu_header_height,
-    .draw_header = menu_draw_header,
-    .draw_row = menu_draw_row,
-    .select_click = menu_select,
-  });
-  menu_layer_set_click_config_onto_window(s_menu_layer, w);
+  window_set_background_color(w, PBL_IF_COLOR_ELSE(GColorBlack, GColorWhite));
+
+  // Status card fills everything except the action bar column (on rectangular
+  // displays). On round the action bar overlaps the edge, so use full bounds.
+  GRect card = PBL_IF_ROUND_ELSE(
+    b,
+    GRect(b.origin.x, b.origin.y, b.size.w - ACTION_BAR_WIDTH, b.size.h));
+  s_card_layer = layer_create(card);
+  layer_set_update_proc(s_card_layer, card_update_proc);
+  layer_add_child(root, s_card_layer);
+
+  s_action_bar = action_bar_layer_create();
+  action_bar_layer_set_click_config_provider(s_action_bar, action_bar_click_config);
 #if defined(PBL_COLOR)
-  menu_layer_set_highlight_colors(s_menu_layer, GColorRed, GColorWhite);
+  action_bar_layer_set_background_color(s_action_bar, ACCENT_COLOR);
 #endif
-  layer_add_child(root, menu_layer_get_layer(s_menu_layer));
+  action_bar_layer_add_to_window(s_action_bar, w);
+  update_action_bar_icons();
 }
 
 static void main_window_unload(Window *w) {
-  menu_layer_destroy(s_menu_layer);
-  s_menu_layer = NULL;
+  animation_unschedule_all();
+  action_bar_layer_destroy(s_action_bar);
+  s_action_bar = NULL;
+  layer_destroy(s_card_layer);
+  s_card_layer = NULL;
 }
 
 static void init(void) {
+  load_icons();
+
   s_main_window = window_create();
   window_set_window_handlers(s_main_window, (WindowHandlers){
     .load = main_window_load,
@@ -356,7 +687,9 @@ static void init(void) {
 }
 
 static void deinit(void) {
+  if (s_controls_window) window_destroy(s_controls_window);
   window_destroy(s_main_window);
+  unload_icons();
 }
 
 int main(void) {

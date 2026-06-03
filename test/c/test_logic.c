@@ -73,6 +73,65 @@ void test_toggle_labels_and_commands(void) {
   TEST_ASSERT_EQUAL_INT(CMD_CLIMATE_ON, climate_toggle_cmd(&s));
 }
 
+void test_battery_pct_and_range(void) {
+  char buf[16];
+  VehicleState s = base();
+
+  fmt_battery_pct(&s, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("84%", buf);
+  fmt_range(&s, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("240 mi", buf);
+
+  s.battery = -1;
+  fmt_battery_pct(&s, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("—", buf);
+  s.range = -1;
+  fmt_range(&s, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("", buf);
+}
+
+void test_battery_num(void) {
+  char buf[16];
+  VehicleState s = base();
+
+  s.battery = 84;
+  fmt_battery_num(&s, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("84", buf);
+  s.battery = 0;
+  fmt_battery_num(&s, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("0", buf);
+  s.battery = 100;
+  fmt_battery_num(&s, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("100", buf);
+  s.battery = -1;
+  fmt_battery_num(&s, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("—", buf);
+}
+
+void test_battery_level(void) {
+  TEST_ASSERT_EQUAL_INT(BATTERY_UNKNOWN, battery_level(-1));
+  TEST_ASSERT_EQUAL_INT(BATTERY_LOW,     battery_level(0));
+  TEST_ASSERT_EQUAL_INT(BATTERY_LOW,     battery_level(20));
+  TEST_ASSERT_EQUAL_INT(BATTERY_MED,     battery_level(21));
+  TEST_ASSERT_EQUAL_INT(BATTERY_MED,     battery_level(50));
+  TEST_ASSERT_EQUAL_INT(BATTERY_HIGH,    battery_level(51));
+  TEST_ASSERT_EQUAL_INT(BATTERY_HIGH,    battery_level(100));
+}
+
+void test_toggle_icons(void) {
+  VehicleState s = base();
+
+  s.locked = true;
+  TEST_ASSERT_EQUAL_INT(ICON_KIND_LOCKED, lock_toggle_icon(&s));
+  s.locked = false;
+  TEST_ASSERT_EQUAL_INT(ICON_KIND_UNLOCKED, lock_toggle_icon(&s));
+
+  s.climate_on = true;
+  TEST_ASSERT_EQUAL_INT(ICON_KIND_CLIMATE_ON, climate_toggle_icon(&s));
+  s.climate_on = false;
+  TEST_ASSERT_EQUAL_INT(ICON_KIND_CLIMATE_OFF, climate_toggle_icon(&s));
+}
+
 void test_awake_label(void) {
   TEST_ASSERT_EQUAL_STRING("Awake", awake_label(AWAKE_AWAKE));
   TEST_ASSERT_EQUAL_STRING("Asleep", awake_label(AWAKE_ASLEEP));
@@ -112,6 +171,10 @@ int main(void) {
   RUN_TEST(test_lock_subtitle);
   RUN_TEST(test_climate_subtitle);
   RUN_TEST(test_toggle_labels_and_commands);
+  RUN_TEST(test_battery_pct_and_range);
+  RUN_TEST(test_battery_num);
+  RUN_TEST(test_battery_level);
+  RUN_TEST(test_toggle_icons);
   RUN_TEST(test_awake_label);
   RUN_TEST(test_power_subtitle);
   RUN_TEST(test_status_header_text);
