@@ -38,6 +38,7 @@
       "TARGET_TEMP",
       "ONLINE",
       "AWAKE",
+      "NAME",
       "ERROR",
       "TEMP_DELTA"
     ],

@@ -95,6 +95,12 @@ function refreshVehicleData(awake) {
     var climate = s.climate_state || {};
     var vehicle = s.vehicle_state || {};
 
+    // User-set vehicle name. `display_name` is the top-level Tesla/Tessie field;
+    // fall back to vehicle_state.vehicle_name. Truncate at a codepoint boundary so
+    // multi-byte sequences (e.g. emoji) are never split mid-character.
+    var name = s.display_name || vehicle.vehicle_name || '';
+    name = Array.from(name).slice(0, 24).join('');
+
     var insideC = Math.round(climate.inside_temp != null ? climate.inside_temp : 0);
     var targetC = Math.round(climate.driver_temp_setting != null
       ? climate.driver_temp_setting : cfg.lastTarget);
@@ -112,7 +118,8 @@ function refreshVehicleData(awake) {
       INSIDE_TEMP: maybeF(insideC),
       TARGET_TEMP: maybeF(targetC),
       ONLINE:      (s.state === 'online') ? 1 : 0,
-      AWAKE:       awake
+      AWAKE:       awake,
+      NAME:        name
     });
   });
 }

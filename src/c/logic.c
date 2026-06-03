@@ -39,6 +39,10 @@ void fmt_power_subtitle(const VehicleState *s, char *out, size_t n) {
   snprintf(out, n, "%s", awake_label(s->awake));
 }
 
+const char *status_header_text(const char *name) {
+  return (name && name[0]) ? name : "Status";
+}
+
 const char *lock_toggle_label(const VehicleState *s) {
   return s->locked ? "Unlock" : "Lock";
 }
