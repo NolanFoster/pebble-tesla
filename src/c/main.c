@@ -1,4 +1,5 @@
 #include <pebble.h>
+#include "logic.h"
 
 // ---- Message keys (must match package.json messageKeys) ----
 #define KEY_CMD          MESSAGE_KEY_CMD
@@ -13,19 +14,7 @@
 #define KEY_ERROR        MESSAGE_KEY_ERROR
 #define KEY_TEMP_DELTA   MESSAGE_KEY_TEMP_DELTA
 
-// ---- Command codes sent watch -> phone ----
-typedef enum {
-  CMD_REFRESH      = 0,
-  CMD_LOCK         = 1,
-  CMD_UNLOCK       = 2,
-  CMD_CLIMATE_ON   = 3,
-  CMD_CLIMATE_OFF  = 4,
-  CMD_TEMP_UP      = 5,
-  CMD_TEMP_DOWN    = 6,
-  CMD_FRUNK        = 7,
-  CMD_TRUNK        = 8,
-  CMD_CHARGE_PORT  = 9,
-} TeslaCommand;
+// ---- Command codes (TeslaCommand enum) come from logic.h ----
 
 // ---- Cached vehicle state ----
 static int      s_battery     = -1;
@@ -140,32 +129,36 @@ static void menu_draw_header(GContext *gctx, const Layer *cell, uint16_t section
     section == SEC_STATUS ? "Status" : "Controls");
 }
 
+// Snapshot the cached globals into a VehicleState for the pure logic helpers.
+static VehicleState current_state(void) {
+  return (VehicleState){
+    .battery = s_battery, .range = s_range,
+    .inside_temp = s_inside_temp, .target_temp = s_target_temp,
+    .locked = s_locked, .climate_on = s_climate_on, .online = s_online,
+  };
+}
+
 static void menu_draw_row(GContext *gctx, const Layer *cell,
                           MenuIndex *idx, void *ctx) {
   char title[40];
   char subtitle[40];
   title[0] = subtitle[0] = '\0';
 
+  VehicleState st = current_state();
+
   if (idx->section == SEC_STATUS) {
     switch (idx->row) {
       case ROW_BATTERY:
         snprintf(title, sizeof(title), "Battery");
-        if (s_battery >= 0)
-          snprintf(subtitle, sizeof(subtitle), "%d%%  •  %d mi", s_battery, s_range);
-        else
-          snprintf(subtitle, sizeof(subtitle), "—");
+        fmt_battery_subtitle(&st, subtitle, sizeof(subtitle));
         break;
       case ROW_LOCK_STATE:
         snprintf(title, sizeof(title), "Doors");
-        snprintf(subtitle, sizeof(subtitle), "%s", s_locked ? "Locked" : "Unlocked");
+        fmt_lock_subtitle(&st, subtitle, sizeof(subtitle));
         break;
       case ROW_CLIMATE_STATE:
         snprintf(title, sizeof(title), "Climate");
-        if (s_climate_on)
-          snprintf(subtitle, sizeof(subtitle), "On  •  in %d° → %d°",
-                   s_inside_temp, s_target_temp);
-        else
-          snprintf(subtitle, sizeof(subtitle), "Off  •  in %d°", s_inside_temp);
+        fmt_climate_subtitle(&st, subtitle, sizeof(subtitle));
         break;
     }
     menu_cell_basic_draw(gctx, cell, title, subtitle, NULL);
@@ -174,8 +167,8 @@ static void menu_draw_row(GContext *gctx, const Layer *cell,
 
   // Actions
   switch (idx->row) {
-    case ACT_LOCK_TOGGLE:    snprintf(title, sizeof(title), s_locked ? "Unlock" : "Lock"); break;
-    case ACT_CLIMATE_TOGGLE: snprintf(title, sizeof(title), s_climate_on ? "Climate Off" : "Climate On"); break;
+    case ACT_LOCK_TOGGLE:    snprintf(title, sizeof(title), "%s", lock_toggle_label(&st)); break;
+    case ACT_CLIMATE_TOGGLE: snprintf(title, sizeof(title), "%s", climate_toggle_label(&st)); break;
     case ACT_TEMP_UP:        snprintf(title, sizeof(title), "Temp +1°"); break;
     case ACT_TEMP_DOWN:      snprintf(title, sizeof(title), "Temp -1°"); break;
     case ACT_FRUNK:          snprintf(title, sizeof(title), "Open Frunk"); break;
@@ -194,14 +187,18 @@ static void menu_select(MenuLayer *ml, MenuIndex *idx, void *ctx) {
     return;
   }
   switch (idx->row) {
-    case ACT_LOCK_TOGGLE:
-      send_command(s_locked ? CMD_UNLOCK : CMD_LOCK, 0);
+    case ACT_LOCK_TOGGLE: {
+      VehicleState st = current_state();
+      send_command(lock_toggle_cmd(&st), 0);
       show_status(s_locked ? "Unlocking…" : "Locking…", 0);
       break;
-    case ACT_CLIMATE_TOGGLE:
-      send_command(s_climate_on ? CMD_CLIMATE_OFF : CMD_CLIMATE_ON, 0);
+    }
+    case ACT_CLIMATE_TOGGLE: {
+      VehicleState st = current_state();
+      send_command(climate_toggle_cmd(&st), 0);
       show_status(s_climate_on ? "Climate off…" : "Climate on…", 0);
       break;
+    }
     case ACT_TEMP_UP:
       send_command(CMD_TEMP_UP, 1);
       show_status("Temp +1°…", 0);
@@ -240,7 +237,7 @@ static void send_command(TeslaCommand cmd, int arg) {
     return;
   }
   dict_write_int(it, KEY_CMD, &cmd, sizeof(int), true);
-  if (cmd == CMD_TEMP_UP || cmd == CMD_TEMP_DOWN) {
+  if (cmd_has_temp_delta(cmd)) {
     dict_write_int(it, KEY_TEMP_DELTA, &arg, sizeof(int), true);
   }
   app_message_outbox_send();

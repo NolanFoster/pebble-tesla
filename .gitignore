@@ -23,3 +23,9 @@ secrets.json
 
 # The packaged zip (regenerate as needed)
 tesla-pebble.zip
+
+# Test artifacts
+coverage/
+build-test/
+*.gcno
+*.gcda

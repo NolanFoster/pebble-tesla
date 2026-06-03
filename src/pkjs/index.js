@@ -209,3 +209,18 @@ function buildConfigHtml(cfg) {
     '}' +
     '</scr' + 'ipt></body></html>';
 }
+
+// Test-only export. pypkjs / JerryScript have no CommonJS `module`, so this
+// guard is a no-op at runtime on the phone; it only activates under Node/Jest.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    CMD: CMD,
+    getConfig: getConfig,
+    tessie: tessie,
+    refreshState: refreshState,
+    doCommand: doCommand,
+    setTemperature: setTemperature,
+    handleCommand: handleCommand,
+    buildConfigHtml: buildConfigHtml
+  };
+}
