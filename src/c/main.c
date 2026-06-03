@@ -31,15 +31,24 @@ static char     s_name[100]   = "";   // vehicle name (UTF-8; room for ~24 emoji
 static char     s_error[64]   = "";
 
 // ---- UI ----
-static Window      *s_main_window;
-static MenuLayer   *s_menu_layer;
-static Window      *s_status_window;   // transient "Sending…" / result overlay
+static Window         *s_main_window;
+static Layer          *s_card_layer;     // custom-drawn status "card" (left of action bar)
+static ActionBarLayer *s_action_bar;     // lock (up) / settings (select) / climate (down)
+static GBitmap        *s_icon_locked, *s_icon_unlocked, *s_icon_settings;
+static GBitmap        *s_icon_climate_on, *s_icon_climate_off;
+
+static Window      *s_controls_window;   // "More Controls" sub-window (select button)
+static MenuLayer   *s_controls_menu;
+
+static Window      *s_status_window;     // transient "Sending…" / result overlay
 static TextLayer   *s_status_text;
 static char         s_status_buf[64];
 static AppTimer    *s_status_timer;
 
 // Forward decls
 static void send_command(TeslaCommand cmd, int arg);
+static void update_action_bar_icons(void);
+static void push_controls_window(void);
 
 // ---------------------------------------------------------------------------
 // Transient status overlay
@@ -91,49 +100,6 @@ static void show_status(const char *msg, uint32_t dismiss_ms) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Menu model
-// ---------------------------------------------------------------------------
-// Section 0: status (read-only rows)   Section 1: actions
-enum { SEC_STATUS = 0, SEC_ACTIONS = 1, NUM_SECTIONS };
-
-enum {
-  ROW_POWER = 0,        // awake / asleep / waiting for sleep
-  ROW_BATTERY,
-  ROW_LOCK_STATE,
-  ROW_CLIMATE_STATE,
-  NUM_STATUS_ROWS
-};
-
-enum {
-  ACT_LOCK_TOGGLE = 0,
-  ACT_CLIMATE_TOGGLE,
-  ACT_TEMP_UP,
-  ACT_TEMP_DOWN,
-  ACT_FRUNK,
-  ACT_TRUNK,
-  ACT_CHARGE_PORT,
-  ACT_REFRESH,
-  NUM_ACTION_ROWS
-};
-
-static uint16_t menu_num_sections(MenuLayer *ml, void *ctx) {
-  return NUM_SECTIONS;
-}
-
-static uint16_t menu_num_rows(MenuLayer *ml, uint16_t section, void *ctx) {
-  return section == SEC_STATUS ? NUM_STATUS_ROWS : NUM_ACTION_ROWS;
-}
-
-static int16_t menu_header_height(MenuLayer *ml, uint16_t section, void *ctx) {
-  return MENU_CELL_BASIC_HEADER_HEIGHT;
-}
-
-static void menu_draw_header(GContext *gctx, const Layer *cell, uint16_t section, void *ctx) {
-  menu_cell_basic_header_draw(gctx, cell,
-    section == SEC_STATUS ? status_header_text(s_name) : "Controls");
-}
-
 // Snapshot the cached globals into a VehicleState for the pure logic helpers.
 static VehicleState current_state(void) {
   return (VehicleState){
@@ -144,96 +110,203 @@ static VehicleState current_state(void) {
   };
 }
 
-static void menu_draw_row(GContext *gctx, const Layer *cell,
-                          MenuIndex *idx, void *ctx) {
-  char title[40];
-  char subtitle[40];
-  title[0] = subtitle[0] = '\0';
-
+// ---------------------------------------------------------------------------
+// Status card (left of the action bar)
+// ---------------------------------------------------------------------------
+// Draws a single screenful of vehicle status: name, battery+range, lock state,
+// climate state and power. All strings come from the shared logic.c formatters
+// so the card stays byte-identical to the old menu rows.
+static void card_update_proc(Layer *layer, GContext *gctx) {
+  GRect b = layer_get_bounds(layer);
   VehicleState st = current_state();
 
-  if (idx->section == SEC_STATUS) {
-    switch (idx->row) {
-      case ROW_POWER:
-        snprintf(title, sizeof(title), "Vehicle");
-        fmt_power_subtitle(&st, subtitle, sizeof(subtitle));
-        break;
-      case ROW_BATTERY:
-        snprintf(title, sizeof(title), "Battery");
-        fmt_battery_subtitle(&st, subtitle, sizeof(subtitle));
-        break;
-      case ROW_LOCK_STATE:
-        snprintf(title, sizeof(title), "Doors");
-        fmt_lock_subtitle(&st, subtitle, sizeof(subtitle));
-        break;
-      case ROW_CLIMATE_STATE:
-        snprintf(title, sizeof(title), "Climate");
-        fmt_climate_subtitle(&st, subtitle, sizeof(subtitle));
-        break;
-    }
-    menu_cell_basic_draw(gctx, cell, title, subtitle, NULL);
-    return;
-  }
+  GColor fg = PBL_IF_COLOR_ELSE(GColorWhite, GColorBlack);
+  graphics_context_set_text_color(gctx, fg);
 
-  // Actions
+  const GTextAlignment align = PBL_IF_ROUND_ELSE(GTextAlignmentCenter, GTextAlignmentLeft);
+  const int16_t pad = PBL_IF_ROUND_ELSE(0, 6);
+  GRect content = GRect(b.origin.x + pad, b.origin.y,
+                        b.size.w - 2 * pad, b.size.h);
+
+  char line[40];
+  GFont f_name = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+  GFont f_body = fonts_get_system_font(FONT_KEY_GOTHIC_18);
+  GFont f_small = fonts_get_system_font(FONT_KEY_GOTHIC_14);
+
+  // Top inset is larger on round to dodge the curved corners.
+  int16_t y = PBL_IF_ROUND_ELSE(28, 6);
+
+  // Vehicle name (or "Status").
+  graphics_draw_text(gctx, status_header_text(s_name), f_name,
+    GRect(content.origin.x, y, content.size.w, 30),
+    GTextOverflowModeTrailingEllipsis, align, NULL);
+  y += 32;
+
+  // Battery + range.
+  fmt_battery_subtitle(&st, line, sizeof(line));
+  graphics_draw_text(gctx, line, f_body,
+    GRect(content.origin.x, y, content.size.w, 24),
+    GTextOverflowModeTrailingEllipsis, align, NULL);
+  y += 26;
+
+  // Doors (lock state).
+  fmt_lock_subtitle(&st, line, sizeof(line));
+  graphics_draw_text(gctx, line, f_body,
+    GRect(content.origin.x, y, content.size.w, 24),
+    GTextOverflowModeTrailingEllipsis, align, NULL);
+  y += 26;
+
+  // Climate (may be longer: "On  •  in 21° → 22°").
+  fmt_climate_subtitle(&st, line, sizeof(line));
+  graphics_draw_text(gctx, line, f_body,
+    GRect(content.origin.x, y, content.size.w, 24),
+    GTextOverflowModeTrailingEllipsis, align, NULL);
+  y += 26;
+
+  // Power/awake (small, footer).
+  fmt_power_subtitle(&st, line, sizeof(line));
+  graphics_draw_text(gctx, line, f_small,
+    GRect(content.origin.x, y, content.size.w, 18),
+    GTextOverflowModeTrailingEllipsis, align, NULL);
+}
+
+// ---------------------------------------------------------------------------
+// Action bar (lock = up, settings = select, climate = down)
+// ---------------------------------------------------------------------------
+static void ab_up_click(ClickRecognizerRef rec, void *ctx) {
+  VehicleState st = current_state();
+  send_command(lock_toggle_cmd(&st), 0);
+  show_status(s_locked ? "Unlocking…" : "Locking…", 0);
+}
+
+static void ab_down_click(ClickRecognizerRef rec, void *ctx) {
+  VehicleState st = current_state();
+  send_command(climate_toggle_cmd(&st), 0);
+  show_status(s_climate_on ? "Climate off…" : "Climate on…", 0);
+}
+
+static void ab_select_click(ClickRecognizerRef rec, void *ctx) {
+  push_controls_window();
+}
+
+static void action_bar_click_config(void *ctx) {
+  window_single_click_subscribe(BUTTON_ID_UP,     ab_up_click);
+  window_single_click_subscribe(BUTTON_ID_SELECT, ab_select_click);
+  window_single_click_subscribe(BUTTON_ID_DOWN,   ab_down_click);
+}
+
+// Refresh the up/down glyphs to mirror the current lock/climate state.
+static void update_action_bar_icons(void) {
+  if (!s_action_bar) return;
+  VehicleState st = current_state();
+  GBitmap *up = (lock_toggle_icon(&st) == ICON_KIND_LOCKED) ? s_icon_locked
+                                                            : s_icon_unlocked;
+  GBitmap *down = (climate_toggle_icon(&st) == ICON_KIND_CLIMATE_ON) ? s_icon_climate_on
+                                                                     : s_icon_climate_off;
+  action_bar_layer_set_icon(s_action_bar, BUTTON_ID_UP, up);
+  action_bar_layer_set_icon(s_action_bar, BUTTON_ID_SELECT, s_icon_settings);
+  action_bar_layer_set_icon(s_action_bar, BUTTON_ID_DOWN, down);
+}
+
+// ---------------------------------------------------------------------------
+// "More Controls" sub-window (opened from the SELECT button)
+// ---------------------------------------------------------------------------
+enum {
+  MC_TEMP_UP = 0,
+  MC_TEMP_DOWN,
+  MC_FRUNK,
+  MC_TRUNK,
+  MC_CHARGE_PORT,
+  MC_REFRESH,
+  MC_COUNT
+};
+
+static uint16_t mc_num_rows(MenuLayer *ml, uint16_t section, void *ctx) {
+  return MC_COUNT;
+}
+
+static int16_t mc_header_height(MenuLayer *ml, uint16_t section, void *ctx) {
+  return MENU_CELL_BASIC_HEADER_HEIGHT;
+}
+
+static void mc_draw_header(GContext *gctx, const Layer *cell, uint16_t section, void *ctx) {
+  menu_cell_basic_header_draw(gctx, cell, "More Controls");
+}
+
+static void mc_draw_row(GContext *gctx, const Layer *cell, MenuIndex *idx, void *ctx) {
+  const char *title = "";
   switch (idx->row) {
-    case ACT_LOCK_TOGGLE:    snprintf(title, sizeof(title), "%s", lock_toggle_label(&st)); break;
-    case ACT_CLIMATE_TOGGLE: snprintf(title, sizeof(title), "%s", climate_toggle_label(&st)); break;
-    case ACT_TEMP_UP:        snprintf(title, sizeof(title), "Temp +1°"); break;
-    case ACT_TEMP_DOWN:      snprintf(title, sizeof(title), "Temp -1°"); break;
-    case ACT_FRUNK:          snprintf(title, sizeof(title), "Open Frunk"); break;
-    case ACT_TRUNK:          snprintf(title, sizeof(title), "Open Trunk"); break;
-    case ACT_CHARGE_PORT:    snprintf(title, sizeof(title), "Charge Port"); break;
-    case ACT_REFRESH:        snprintf(title, sizeof(title), "Refresh"); break;
+    case MC_TEMP_UP:     title = "Temp +1°";    break;
+    case MC_TEMP_DOWN:   title = "Temp -1°";    break;
+    case MC_FRUNK:       title = "Open Frunk";  break;
+    case MC_TRUNK:       title = "Open Trunk";  break;
+    case MC_CHARGE_PORT: title = "Charge Port"; break;
+    case MC_REFRESH:     title = "Refresh";     break;
   }
   menu_cell_basic_draw(gctx, cell, title, NULL, NULL);
 }
 
-static void menu_select(MenuLayer *ml, MenuIndex *idx, void *ctx) {
-  if (idx->section == SEC_STATUS) {
-    // tapping a status row refreshes
-    send_command(CMD_REFRESH, 0);
-    show_status("Refreshing…", 0);
-    return;
-  }
+static void mc_select(MenuLayer *ml, MenuIndex *idx, void *ctx) {
   switch (idx->row) {
-    case ACT_LOCK_TOGGLE: {
-      VehicleState st = current_state();
-      send_command(lock_toggle_cmd(&st), 0);
-      show_status(s_locked ? "Unlocking…" : "Locking…", 0);
-      break;
-    }
-    case ACT_CLIMATE_TOGGLE: {
-      VehicleState st = current_state();
-      send_command(climate_toggle_cmd(&st), 0);
-      show_status(s_climate_on ? "Climate off…" : "Climate on…", 0);
-      break;
-    }
-    case ACT_TEMP_UP:
+    case MC_TEMP_UP:
       send_command(CMD_TEMP_UP, 1);
       show_status("Temp +1°…", 0);
       break;
-    case ACT_TEMP_DOWN:
+    case MC_TEMP_DOWN:
       send_command(CMD_TEMP_DOWN, -1);
       show_status("Temp -1°…", 0);
       break;
-    case ACT_FRUNK:
+    case MC_FRUNK:
       send_command(CMD_FRUNK, 0);
       show_status("Opening frunk…", 0);
       break;
-    case ACT_TRUNK:
+    case MC_TRUNK:
       send_command(CMD_TRUNK, 0);
       show_status("Opening trunk…", 0);
       break;
-    case ACT_CHARGE_PORT:
+    case MC_CHARGE_PORT:
       send_command(CMD_CHARGE_PORT, 0);
       show_status("Charge port…", 0);
       break;
-    case ACT_REFRESH:
+    case MC_REFRESH:
       send_command(CMD_REFRESH, 0);
       show_status("Refreshing…", 0);
       break;
   }
+}
+
+static void controls_window_load(Window *w) {
+  Layer *root = window_get_root_layer(w);
+  GRect b = layer_get_bounds(root);
+  s_controls_menu = menu_layer_create(b);
+  menu_layer_set_callbacks(s_controls_menu, NULL, (MenuLayerCallbacks){
+    .get_num_rows = mc_num_rows,
+    .get_header_height = mc_header_height,
+    .draw_header = mc_draw_header,
+    .draw_row = mc_draw_row,
+    .select_click = mc_select,
+  });
+  menu_layer_set_click_config_onto_window(s_controls_menu, w);
+#if defined(PBL_COLOR)
+  menu_layer_set_highlight_colors(s_controls_menu, GColorRed, GColorWhite);
+#endif
+  layer_add_child(root, menu_layer_get_layer(s_controls_menu));
+}
+
+static void controls_window_unload(Window *w) {
+  menu_layer_destroy(s_controls_menu);
+  s_controls_menu = NULL;
+}
+
+static void push_controls_window(void) {
+  if (!s_controls_window) {
+    s_controls_window = window_create();
+    window_set_window_handlers(s_controls_window, (WindowHandlers){
+      .load = controls_window_load,
+      .unload = controls_window_unload,
+    });
+  }
+  window_stack_push(s_controls_window, true);
 }
 
 // ---------------------------------------------------------------------------
@@ -286,8 +359,10 @@ static void inbox_received(DictionaryIterator *it, void *ctx) {
     got_state = true;
   }
 
-  if (got_state && s_menu_layer) {
-    menu_layer_reload_data(s_menu_layer);
+  if (got_state) {
+    if (s_card_layer) layer_mark_dirty(s_card_layer);
+    update_action_bar_icons();                        // lock/climate glyph follows state
+    if (s_controls_menu) menu_layer_reload_data(s_controls_menu);
     // A fresh state read means any in-flight "Refreshing…/…ing" overlay is done.
     // Refresh replies carry no STATUS, so without this the overlay (shown with
     // dismiss_ms=0) would stay up forever and swallow further button presses.
@@ -311,32 +386,56 @@ static void outbox_sent(DictionaryIterator *it, void *ctx) {
 // ---------------------------------------------------------------------------
 // Main window
 // ---------------------------------------------------------------------------
+static void load_icons(void) {
+  s_icon_locked      = gbitmap_create_with_resource(RESOURCE_ID_ICON_LOCKED);
+  s_icon_unlocked    = gbitmap_create_with_resource(RESOURCE_ID_ICON_UNLOCKED);
+  s_icon_settings    = gbitmap_create_with_resource(RESOURCE_ID_ICON_SETTINGS);
+  s_icon_climate_on  = gbitmap_create_with_resource(RESOURCE_ID_ICON_CLIMATE_ON);
+  s_icon_climate_off = gbitmap_create_with_resource(RESOURCE_ID_ICON_CLIMATE_OFF);
+}
+
+static void unload_icons(void) {
+  gbitmap_destroy(s_icon_locked);      s_icon_locked = NULL;
+  gbitmap_destroy(s_icon_unlocked);    s_icon_unlocked = NULL;
+  gbitmap_destroy(s_icon_settings);    s_icon_settings = NULL;
+  gbitmap_destroy(s_icon_climate_on);  s_icon_climate_on = NULL;
+  gbitmap_destroy(s_icon_climate_off); s_icon_climate_off = NULL;
+}
+
 static void main_window_load(Window *w) {
   Layer *root = window_get_root_layer(w);
   GRect b = layer_get_bounds(root);
 
-  s_menu_layer = menu_layer_create(b);
-  menu_layer_set_callbacks(s_menu_layer, NULL, (MenuLayerCallbacks){
-    .get_num_sections = menu_num_sections,
-    .get_num_rows = menu_num_rows,
-    .get_header_height = menu_header_height,
-    .draw_header = menu_draw_header,
-    .draw_row = menu_draw_row,
-    .select_click = menu_select,
-  });
-  menu_layer_set_click_config_onto_window(s_menu_layer, w);
+  window_set_background_color(w, PBL_IF_COLOR_ELSE(GColorBlack, GColorWhite));
+
+  // Status card fills everything except the action bar column (on rectangular
+  // displays). On round the action bar overlaps the edge, so use full bounds.
+  GRect card = PBL_IF_ROUND_ELSE(
+    b,
+    GRect(b.origin.x, b.origin.y, b.size.w - ACTION_BAR_WIDTH, b.size.h));
+  s_card_layer = layer_create(card);
+  layer_set_update_proc(s_card_layer, card_update_proc);
+  layer_add_child(root, s_card_layer);
+
+  s_action_bar = action_bar_layer_create();
+  action_bar_layer_set_click_config_provider(s_action_bar, action_bar_click_config);
 #if defined(PBL_COLOR)
-  menu_layer_set_highlight_colors(s_menu_layer, GColorRed, GColorWhite);
+  action_bar_layer_set_background_color(s_action_bar, GColorRed);
 #endif
-  layer_add_child(root, menu_layer_get_layer(s_menu_layer));
+  action_bar_layer_add_to_window(s_action_bar, w);
+  update_action_bar_icons();
 }
 
 static void main_window_unload(Window *w) {
-  menu_layer_destroy(s_menu_layer);
-  s_menu_layer = NULL;
+  action_bar_layer_destroy(s_action_bar);
+  s_action_bar = NULL;
+  layer_destroy(s_card_layer);
+  s_card_layer = NULL;
 }
 
 static void init(void) {
+  load_icons();
+
   s_main_window = window_create();
   window_set_window_handlers(s_main_window, (WindowHandlers){
     .load = main_window_load,
@@ -356,7 +455,9 @@ static void init(void) {
 }
 
 static void deinit(void) {
+  if (s_controls_window) window_destroy(s_controls_window);
   window_destroy(s_main_window);
+  unload_icons();
 }
 
 int main(void) {

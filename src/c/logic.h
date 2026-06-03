@@ -71,4 +71,18 @@ const char *climate_toggle_label(const VehicleState *s);  // "Climate On" / "Cli
 int lock_toggle_cmd(const VehicleState *s);     // CMD_LOCK / CMD_UNLOCK
 int climate_toggle_cmd(const VehicleState *s);  // CMD_CLIMATE_ON / CMD_CLIMATE_OFF
 
+// Which action-bar glyph to show for the lock / climate buttons. The icon
+// reflects the *current* vehicle state (a closed padlock when locked, a running
+// fan when climate is on) so it doubles as a status indicator. Returns an enum
+// rather than a RESOURCE_ID_* so this stays host-testable (no <pebble.h>).
+typedef enum {
+  ICON_KIND_LOCKED = 0,    // doors locked
+  ICON_KIND_UNLOCKED,      // doors unlocked
+  ICON_KIND_CLIMATE_ON,    // climate running
+  ICON_KIND_CLIMATE_OFF,   // climate off
+} IconKind;
+
+IconKind lock_toggle_icon(const VehicleState *s);     // ICON_KIND_LOCKED / _UNLOCKED
+IconKind climate_toggle_icon(const VehicleState *s);  // ICON_KIND_CLIMATE_ON / _OFF
+
 #endif // LOGIC_H

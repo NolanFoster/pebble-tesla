@@ -73,6 +73,20 @@ void test_toggle_labels_and_commands(void) {
   TEST_ASSERT_EQUAL_INT(CMD_CLIMATE_ON, climate_toggle_cmd(&s));
 }
 
+void test_toggle_icons(void) {
+  VehicleState s = base();
+
+  s.locked = true;
+  TEST_ASSERT_EQUAL_INT(ICON_KIND_LOCKED, lock_toggle_icon(&s));
+  s.locked = false;
+  TEST_ASSERT_EQUAL_INT(ICON_KIND_UNLOCKED, lock_toggle_icon(&s));
+
+  s.climate_on = true;
+  TEST_ASSERT_EQUAL_INT(ICON_KIND_CLIMATE_ON, climate_toggle_icon(&s));
+  s.climate_on = false;
+  TEST_ASSERT_EQUAL_INT(ICON_KIND_CLIMATE_OFF, climate_toggle_icon(&s));
+}
+
 void test_awake_label(void) {
   TEST_ASSERT_EQUAL_STRING("Awake", awake_label(AWAKE_AWAKE));
   TEST_ASSERT_EQUAL_STRING("Asleep", awake_label(AWAKE_ASLEEP));
@@ -112,6 +126,7 @@ int main(void) {
   RUN_TEST(test_lock_subtitle);
   RUN_TEST(test_climate_subtitle);
   RUN_TEST(test_toggle_labels_and_commands);
+  RUN_TEST(test_toggle_icons);
   RUN_TEST(test_awake_label);
   RUN_TEST(test_power_subtitle);
   RUN_TEST(test_status_header_text);
