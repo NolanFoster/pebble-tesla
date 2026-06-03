@@ -56,6 +56,21 @@ void fmt_lock_subtitle(const VehicleState *s, char *out, size_t n);
 void fmt_climate_subtitle(const VehicleState *s, char *out, size_t n);
 void fmt_power_subtitle(const VehicleState *s, char *out, size_t n);
 
+// Battery gauge text, split so the percentage can sit inside a circular gauge
+// and the range just beneath it. `out` is always NUL-terminated.
+void fmt_battery_pct(const VehicleState *s, char *out, size_t n);  // "84%" or "—"
+void fmt_range(const VehicleState *s, char *out, size_t n);        // "240 mi" or ""
+
+// Charge level bucket, used to color the battery gauge arc. Returned as an enum
+// (not a GColor) so this stays host-testable without <pebble.h>.
+typedef enum {
+  BATTERY_UNKNOWN = -1,  // battery < 0
+  BATTERY_LOW     = 0,   // <= 20%
+  BATTERY_MED,           // <= 50%
+  BATTERY_HIGH,          // > 50%
+} BatteryLevel;
+BatteryLevel battery_level(int pct);
+
 // Human label for an AwakeStatus value ("Awake"/"Asleep"/"Waiting for sleep"/"—").
 const char *awake_label(int awake);
 

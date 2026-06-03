@@ -113,16 +113,61 @@ static VehicleState current_state(void) {
 // ---------------------------------------------------------------------------
 // Status card (left of the action bar)
 // ---------------------------------------------------------------------------
-// Draws a single screenful of vehicle status: name, battery+range, lock state,
-// climate state and power. All strings come from the shared logic.c formatters
-// so the card stays byte-identical to the old menu rows.
+#if defined(PBL_COLOR)
+static GColor battery_arc_color(int battery) {
+  switch (battery_level(battery)) {
+    case BATTERY_LOW:  return GColorRed;
+    case BATTERY_MED:  return GColorYellow;
+    case BATTERY_HIGH: return GColorGreen;
+    default:           return GColorLightGray;  // unknown
+  }
+}
+#endif
+
+// Circular battery gauge: a ring whose filled arc tracks the charge level, with
+// the percentage and range stacked inside it. The arc sweeps clockwise from 12
+// o'clock (graphics_fill_radial's 0 angle).
+static void draw_battery_gauge(GContext *gctx, GRect box, const VehicleState *st) {
+  int pct = st->battery;
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  const uint16_t thick = 6;
+  const int32_t end = TRIG_MAX_ANGLE * pct / 100;
+
+#if defined(PBL_COLOR)
+  graphics_context_set_fill_color(gctx, GColorDarkGray);                  // track
+  graphics_fill_radial(gctx, box, GOvalScaleModeFitCircle, thick, 0, TRIG_MAX_ANGLE);
+  graphics_context_set_fill_color(gctx, battery_arc_color(st->battery));  // charge
+  graphics_fill_radial(gctx, box, GOvalScaleModeFitCircle, thick, 0, end);
+#else
+  // 1-bit: a thin full track ring plus a thicker progress arc (the extra
+  // thickness, not color, conveys the level).
+  graphics_context_set_fill_color(gctx, GColorBlack);
+  graphics_fill_radial(gctx, box, GOvalScaleModeFitCircle, 2, 0, TRIG_MAX_ANGLE);
+  graphics_fill_radial(gctx, box, GOvalScaleModeFitCircle, thick, 0, end);
+#endif
+
+  // Percentage + range stacked inside the ring.
+  char buf[16];
+  graphics_context_set_text_color(gctx, PBL_IF_COLOR_ELSE(GColorWhite, GColorBlack));
+  fmt_battery_pct(st, buf, sizeof(buf));
+  graphics_draw_text(gctx, buf, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
+    GRect(box.origin.x, box.origin.y + box.size.h / 2 - 20, box.size.w, 26),
+    GTextOverflowModeFill, GTextAlignmentCenter, NULL);
+  fmt_range(st, buf, sizeof(buf));
+  graphics_draw_text(gctx, buf, fonts_get_system_font(FONT_KEY_GOTHIC_14),
+    GRect(box.origin.x, box.origin.y + box.size.h / 2 + 4, box.size.w, 16),
+    GTextOverflowModeFill, GTextAlignmentCenter, NULL);
+}
+
+// Draws a single screenful of vehicle status: name, a circular battery gauge,
+// lock state, climate state and power. Strings come from the shared logic.c
+// formatters so the card text stays consistent with the rest of the app.
 static void card_update_proc(Layer *layer, GContext *gctx) {
   GRect b = layer_get_bounds(layer);
   VehicleState st = current_state();
 
   GColor fg = PBL_IF_COLOR_ELSE(GColorWhite, GColorBlack);
-  graphics_context_set_text_color(gctx, fg);
-
   const GTextAlignment align = PBL_IF_ROUND_ELSE(GTextAlignmentCenter, GTextAlignmentLeft);
   const int16_t pad = PBL_IF_ROUND_ELSE(0, 6);
   GRect content = GRect(b.origin.x + pad, b.origin.y,
@@ -134,34 +179,35 @@ static void card_update_proc(Layer *layer, GContext *gctx) {
   GFont f_small = fonts_get_system_font(FONT_KEY_GOTHIC_14);
 
   // Top inset is larger on round to dodge the curved corners.
-  int16_t y = PBL_IF_ROUND_ELSE(28, 6);
+  int16_t y = PBL_IF_ROUND_ELSE(18, 4);
 
   // Vehicle name (or "Status").
+  graphics_context_set_text_color(gctx, fg);
   graphics_draw_text(gctx, status_header_text(s_name), f_name,
-    GRect(content.origin.x, y, content.size.w, 30),
+    GRect(content.origin.x, y, content.size.w, 28),
     GTextOverflowModeTrailingEllipsis, align, NULL);
-  y += 32;
+  y += 30;
 
-  // Battery + range.
-  fmt_battery_subtitle(&st, line, sizeof(line));
-  graphics_draw_text(gctx, line, f_body,
-    GRect(content.origin.x, y, content.size.w, 24),
-    GTextOverflowModeTrailingEllipsis, align, NULL);
-  y += 26;
+  // Circular battery gauge, centered in the card width.
+  const int16_t diam = PBL_IF_ROUND_ELSE(52, 56);
+  GRect gauge = GRect(content.origin.x + (content.size.w - diam) / 2, y, diam, diam);
+  draw_battery_gauge(gctx, gauge, &st);
+  y += diam + 4;
 
   // Doors (lock state).
+  graphics_context_set_text_color(gctx, fg);
   fmt_lock_subtitle(&st, line, sizeof(line));
   graphics_draw_text(gctx, line, f_body,
-    GRect(content.origin.x, y, content.size.w, 24),
+    GRect(content.origin.x, y, content.size.w, 22),
     GTextOverflowModeTrailingEllipsis, align, NULL);
-  y += 26;
+  y += 23;
 
   // Climate (may be longer: "On  •  in 21° → 22°").
   fmt_climate_subtitle(&st, line, sizeof(line));
   graphics_draw_text(gctx, line, f_body,
-    GRect(content.origin.x, y, content.size.w, 24),
+    GRect(content.origin.x, y, content.size.w, 22),
     GTextOverflowModeTrailingEllipsis, align, NULL);
-  y += 26;
+  y += 23;
 
   // Power/awake (small, footer).
   fmt_power_subtitle(&st, line, sizeof(line));

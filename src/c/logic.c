@@ -15,6 +15,27 @@ void fmt_battery_subtitle(const VehicleState *s, char *out, size_t n) {
     snprintf(out, n, "—");
 }
 
+void fmt_battery_pct(const VehicleState *s, char *out, size_t n) {
+  if (s->battery >= 0)
+    snprintf(out, n, "%d%%", s->battery);
+  else
+    snprintf(out, n, "—");
+}
+
+void fmt_range(const VehicleState *s, char *out, size_t n) {
+  if (s->range >= 0)
+    snprintf(out, n, "%d mi", s->range);
+  else
+    snprintf(out, n, "%s", "");
+}
+
+BatteryLevel battery_level(int pct) {
+  if (pct < 0)   return BATTERY_UNKNOWN;
+  if (pct <= 20) return BATTERY_LOW;
+  if (pct <= 50) return BATTERY_MED;
+  return BATTERY_HIGH;
+}
+
 void fmt_lock_subtitle(const VehicleState *s, char *out, size_t n) {
   snprintf(out, n, "%s", s->locked ? "Locked" : "Unlocked");
 }
