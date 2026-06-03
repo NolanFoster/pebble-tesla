@@ -25,6 +25,16 @@ typedef enum {
   CMD_CHARGE_PORT  = 9,
 } TeslaCommand;
 
+// Vehicle power status from Tessie GET /{vin}/status. Commands can only be sent
+// when AWAKE; otherwise the phone issues a wake first. Sent watch<->phone as the
+// AWAKE message key (int). Keep these values in sync with awakeCode() in index.js.
+typedef enum {
+  AWAKE_UNKNOWN = -1,
+  AWAKE_ASLEEP  = 0,
+  AWAKE_AWAKE   = 1,
+  AWAKE_WAITING = 2,  // waiting_for_sleep
+} AwakeStatus;
+
 // Snapshot of vehicle state used purely for rendering decisions.
 typedef struct {
   int  battery;       // percent, or <0 when unknown
@@ -34,6 +44,7 @@ typedef struct {
   bool locked;
   bool climate_on;
   bool online;
+  int  awake;         // AwakeStatus
 } VehicleState;
 
 // Does this command carry a TEMP_DELTA argument in the outbox dict?
@@ -43,6 +54,10 @@ bool cmd_has_temp_delta(int cmd);
 void fmt_battery_subtitle(const VehicleState *s, char *out, size_t n);
 void fmt_lock_subtitle(const VehicleState *s, char *out, size_t n);
 void fmt_climate_subtitle(const VehicleState *s, char *out, size_t n);
+void fmt_power_subtitle(const VehicleState *s, char *out, size_t n);
+
+// Human label for an AwakeStatus value ("Awake"/"Asleep"/"Waiting for sleep"/"—").
+const char *awake_label(int awake);
 
 // Action-row dynamic labels (returns a static string; never NULL).
 const char *lock_toggle_label(const VehicleState *s);     // "Lock" / "Unlock"

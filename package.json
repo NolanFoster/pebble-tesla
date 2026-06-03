@@ -36,6 +36,7 @@
       "INSIDE_TEMP",
       "TARGET_TEMP",
       "ONLINE",
+      "AWAKE",
       "ERROR",
       "TEMP_DELTA"
     ],

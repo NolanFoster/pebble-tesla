@@ -65,22 +65,27 @@ saved.
 
 - The main screen is a button-driven menu (PT2's touchscreen works too, but
   buttons are the reliable primary input).
-- **Status** section: Battery / Doors / Climate. Select any row to refresh.
+- **Status** section: Vehicle (awake / asleep / waiting for sleep) / Battery /
+  Doors / Climate. Select any row to refresh. The awake state comes from Tessie's
+  `GET /{vin}/status`; refreshing never wakes the car.
 - **Controls** section: Lock/Unlock (label flips with state), Climate On/Off,
   Temp ±1°, Open Frunk, Open Trunk, Charge Port, Refresh.
 - A short overlay shows "Locking…", then the result, then auto-dismisses.
 
 ## Notes & gotchas
 
-- **Sleeping car:** the first command after the car sleeps can take 10–30s while
-  it wakes. The JS timeout is 35s; you'll see "Timed out (car asleep?)" if it
-  exceeds that — just retry.
+- **Sleeping car:** Tesla commands only work when the car is awake. Before any
+  command the phone checks `GET /{vin}/status`; if the car isn't awake it shows
+  "Waking…" and issues `POST /{vin}/wake` (which can take up to ~90s) before
+  sending the command. State refreshes use a 35s timeout; you'll see "Timed out
+  (car asleep?)" if a read exceeds that — just retry.
 - **Temperature** is tracked in °C internally (Tessie's `set_temperature` takes
   Celsius) and clamped to 15–28°C. The ±1° buttons step from the last known
   target; a refresh re-syncs it to the car's actual setting.
-- **Endpoints used:** `GET /{vin}/state`, `POST /{vin}/command/{lock|unlock|
-  start_climate|stop_climate|set_temperature|activate_front_trunk|
-  activate_rear_trunk|open_charge_port}`.
+- **Endpoints used:** `GET /{vin}/status`, `GET /{vin}/state`,
+  `POST /{vin}/wake`, `POST /{vin}/command/{lock|unlock|start_climate|
+  stop_climate|set_temperature|activate_front_trunk|activate_rear_trunk|
+  open_charge_port}`.
 - **Security:** anyone with physical access to your unlocked phone could open
   the settings page, but the saved token is masked. Consider a Tessie token
   scoped to only the commands you need if Tessie offers scoping.

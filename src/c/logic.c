@@ -26,6 +26,19 @@ void fmt_climate_subtitle(const VehicleState *s, char *out, size_t n) {
     snprintf(out, n, "Off  •  in %d°", s->inside_temp);
 }
 
+const char *awake_label(int awake) {
+  switch (awake) {
+    case AWAKE_AWAKE:   return "Awake";
+    case AWAKE_ASLEEP:  return "Asleep";
+    case AWAKE_WAITING: return "Waiting for sleep";
+    default:            return "—";
+  }
+}
+
+void fmt_power_subtitle(const VehicleState *s, char *out, size_t n) {
+  snprintf(out, n, "%s", awake_label(s->awake));
+}
+
 const char *lock_toggle_label(const VehicleState *s) {
   return s->locked ? "Unlock" : "Lock";
 }
