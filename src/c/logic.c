@@ -58,3 +58,11 @@ int lock_toggle_cmd(const VehicleState *s) {
 int climate_toggle_cmd(const VehicleState *s) {
   return s->climate_on ? CMD_CLIMATE_OFF : CMD_CLIMATE_ON;
 }
+
+IconKind lock_toggle_icon(const VehicleState *s) {
+  return s->locked ? ICON_KIND_LOCKED : ICON_KIND_UNLOCKED;
+}
+
+IconKind climate_toggle_icon(const VehicleState *s) {
+  return s->climate_on ? ICON_KIND_CLIMATE_ON : ICON_KIND_CLIMATE_OFF;
+}
