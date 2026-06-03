@@ -12,6 +12,7 @@
 #define KEY_TARGET_TEMP  MESSAGE_KEY_TARGET_TEMP
 #define KEY_ONLINE       MESSAGE_KEY_ONLINE
 #define KEY_AWAKE        MESSAGE_KEY_AWAKE
+#define KEY_NAME         MESSAGE_KEY_NAME
 #define KEY_ERROR        MESSAGE_KEY_ERROR
 #define KEY_TEMP_DELTA   MESSAGE_KEY_TEMP_DELTA
 
@@ -26,6 +27,7 @@ static int      s_inside_temp = 0;
 static int      s_target_temp = 0;
 static bool     s_online      = false;
 static int      s_awake       = AWAKE_UNKNOWN;
+static char     s_name[100]   = "";   // vehicle name (UTF-8; room for ~24 emoji)
 static char     s_error[64]   = "";
 
 // ---- UI ----
@@ -129,7 +131,7 @@ static int16_t menu_header_height(MenuLayer *ml, uint16_t section, void *ctx) {
 
 static void menu_draw_header(GContext *gctx, const Layer *cell, uint16_t section, void *ctx) {
   menu_cell_basic_header_draw(gctx, cell,
-    section == SEC_STATUS ? "Status" : "Controls");
+    section == SEC_STATUS ? status_header_text(s_name) : "Controls");
 }
 
 // Snapshot the cached globals into a VehicleState for the pure logic helpers.
@@ -278,6 +280,11 @@ static void inbox_received(DictionaryIterator *it, void *ctx) {
   if ((t = dict_find(it, KEY_TARGET_TEMP))) { s_target_temp = t->value->int32; got_state = true; }
   if ((t = dict_find(it, KEY_ONLINE)))      { s_online = t->value->int32 != 0; got_state = true; }
   if ((t = dict_find(it, KEY_AWAKE)))       { s_awake = t->value->int32; got_state = true; }
+  if ((t = dict_find(it, KEY_NAME))) {
+    strncpy(s_name, t->value->cstring, sizeof(s_name) - 1);
+    s_name[sizeof(s_name) - 1] = '\0';
+    got_state = true;
+  }
 
   if (got_state && s_menu_layer) {
     menu_layer_reload_data(s_menu_layer);

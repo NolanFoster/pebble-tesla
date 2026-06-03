@@ -59,6 +59,10 @@ void fmt_power_subtitle(const VehicleState *s, char *out, size_t n);
 // Human label for an AwakeStatus value ("Awake"/"Asleep"/"Waiting for sleep"/"—").
 const char *awake_label(int awake);
 
+// Header text for the Status section: the vehicle's name if set, else "Status".
+// `name` may be NULL or empty.
+const char *status_header_text(const char *name);
+
 // Action-row dynamic labels (returns a static string; never NULL).
 const char *lock_toggle_label(const VehicleState *s);     // "Lock" / "Unlock"
 const char *climate_toggle_label(const VehicleState *s);  // "Climate On" / "Climate Off"

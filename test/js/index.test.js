@@ -164,6 +164,7 @@ describe('ensureAwake', function () {
 describe('refreshState', function () {
   var STATE = {
     state: 'online',
+    display_name: 'Bumblebee',
     charge_state: { battery_level: 84, battery_range: 240.4 },
     climate_state: { inside_temp: 21, driver_temp_setting: 22, is_climate_on: true },
     vehicle_state: { locked: true }
@@ -179,7 +180,7 @@ describe('refreshState', function () {
     xhr.respond(200, STATE);
     expect(global.Pebble.sendAppMessage).toHaveBeenCalledWith({
       BATTERY: 84, RANGE: 240, LOCKED: 1, CLIMATE_ON: 1,
-      INSIDE_TEMP: 21, TARGET_TEMP: 22, ONLINE: 1, AWAKE: 1
+      INSIDE_TEMP: 21, TARGET_TEMP: 22, ONLINE: 1, AWAKE: 1, NAME: 'Bumblebee'
     }, expect.any(Function), expect.any(Function));
     expect(global.localStorage.getItem('last_target')).toBe('22'); // stored in °C
   });
@@ -211,6 +212,44 @@ describe('refreshState', function () {
     expect(dict.INSIDE_TEMP).toBe(70); // round(21*9/5+32)
     expect(dict.TARGET_TEMP).toBe(72); // round(22*9/5+32)=71.6→72
     expect(global.localStorage.getItem('last_target')).toBe('22'); // still °C
+  });
+
+  test('sends the vehicle name, preferring display_name', function () {
+    var m = load(CONFIGURED);
+    m.refreshState();
+    ackStatus('awake');
+    global.XMLHttpRequest.last().respond(200, STATE);
+    var dict = global.Pebble.sendAppMessage.mock.calls[0][0];
+    expect(dict.NAME).toBe('Bumblebee');
+  });
+
+  test('falls back to vehicle_state.vehicle_name, then empty', function () {
+    var m = load(CONFIGURED);
+    m.refreshState();
+    ackStatus('awake');
+    global.XMLHttpRequest.last().respond(200, {
+      state: 'online', vehicle_state: { locked: true, vehicle_name: 'Optimus' }
+    });
+    expect(global.Pebble.sendAppMessage.mock.calls[0][0].NAME).toBe('Optimus');
+
+    global.Pebble.sendAppMessage.mockClear();
+    m.refreshState();
+    ackStatus('awake');
+    global.XMLHttpRequest.last().respond(200, {});
+    expect(global.Pebble.sendAppMessage.mock.calls[0][0].NAME).toBe('');
+  });
+
+  test('truncates long names at a codepoint boundary (no split emoji)', function () {
+    var m = load(CONFIGURED);
+    m.refreshState();
+    ackStatus('awake');
+    // 30 rocket emoji; each is a surrogate pair in UTF-16. Expect 24 codepoints,
+    // and every character intact (no lone surrogate).
+    var longName = '🚀'.repeat(30);
+    global.XMLHttpRequest.last().respond(200, { state: 'online', display_name: longName });
+    var name = global.Pebble.sendAppMessage.mock.calls[0][0].NAME;
+    expect(Array.from(name).length).toBe(24);
+    expect(name).toBe('🚀'.repeat(24));
   });
 
   test('falls back to zeros and lastTarget on empty state', function () {
@@ -263,10 +302,10 @@ describe('doCommand', function () {
       { ERROR: 'Command rejected' }, expect.any(Function), expect.any(Function));
   });
 
-  test('confirms success then schedules a refresh', function () {
+  test('confirms success then re-reads /state, stopping once it settles', function () {
     jest.useFakeTimers();
     var m = load(CONFIGURED);
-    m.doCommand('/command/lock', 'Locked');
+    m.handleCommand(m.CMD.LOCK); // via handleCommand so the isLocked predicate is wired
     ackStatus('awake');
     global.XMLHttpRequest.last().respond(200, { result: true });
     expect(global.Pebble.sendAppMessage).toHaveBeenCalledWith(
@@ -274,9 +313,42 @@ describe('doCommand', function () {
 
     var before = global.XMLHttpRequest.instances.length;
     jest.advanceTimersByTime(800);
-    var after = global.XMLHttpRequest.instances.length;
-    expect(after).toBe(before + 1); // refreshState fired a new GET (the /status precheck)
-    expect(global.XMLHttpRequest.last().url).toContain('/status');
+    var read = global.XMLHttpRequest.last();
+    expect(global.XMLHttpRequest.instances.length).toBe(before + 1);
+    expect(read.url).toContain('/state?use_cache=false'); // reads state directly, no /status
+    // state now reflects the lock -> polling stops
+    read.respond(200, { vehicle_state: { locked: true } });
+    jest.advanceTimersByTime(5000);
+    expect(global.XMLHttpRequest.instances.length).toBe(before + 1);
+  });
+
+  test('keeps polling while the car still reports the old value', function () {
+    jest.useFakeTimers();
+    var m = load(CONFIGURED);
+    m.handleCommand(m.CMD.LOCK);
+    ackStatus('awake');
+    global.XMLHttpRequest.last().respond(200, { result: true });
+
+    jest.advanceTimersByTime(800);
+    // first read is stale (still unlocked) -> schedules another read
+    global.XMLHttpRequest.last().respond(200, { vehicle_state: { locked: false } });
+    var afterFirst = global.XMLHttpRequest.instances.length;
+    jest.advanceTimersByTime(1500);
+    expect(global.XMLHttpRequest.instances.length).toBe(afterFirst + 1);
+    expect(global.XMLHttpRequest.last().url).toContain('/state?use_cache=false');
+  });
+
+  test('commands with no status row read state just once', function () {
+    jest.useFakeTimers();
+    var m = load(CONFIGURED);
+    m.handleCommand(m.CMD.FRUNK); // frunk has no observable status row -> no predicate
+    ackStatus('awake');
+    global.XMLHttpRequest.last().respond(200, { result: true });
+    jest.advanceTimersByTime(800);
+    global.XMLHttpRequest.last().respond(200, {});
+    var n = global.XMLHttpRequest.instances.length;
+    jest.advanceTimersByTime(5000);
+    expect(global.XMLHttpRequest.instances.length).toBe(n); // no further polling
   });
 
   test('wakes a sleeping car before sending the command', function () {
