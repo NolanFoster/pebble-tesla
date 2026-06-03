@@ -37,7 +37,7 @@ function sendError(msg) {
 }
 
 // ---- HTTP helpers ----
-function tessie(method, path, cb) {
+function tessie(method, path, cb, timeoutMs) {
   var cfg = getConfig();
   if (!cfg.token || !cfg.vin) {
     sendError('Set token & VIN in app settings');
@@ -47,7 +47,7 @@ function tessie(method, path, cb) {
   var xhr = new XMLHttpRequest();
   xhr.open(method, url, true);
   xhr.setRequestHeader('Authorization', 'Bearer ' + cfg.token);
-  xhr.timeout = 35000; // commands can take a while if the car is asleep
+  xhr.timeout = timeoutMs || 35000; // commands can take a while if the car is asleep
   xhr.onload = function () {
     if (xhr.status >= 200 && xhr.status < 300) {
       var data = null;
@@ -64,8 +64,27 @@ function tessie(method, path, cb) {
   xhr.send();
 }
 
+// Tessie GET /{vin}/status -> { status: "asleep" | "waiting_for_sleep" | "awake" }.
+// Keep these codes in sync with the AwakeStatus enum in logic.h.
+function awakeCode(status) {
+  switch (status) {
+    case 'awake':             return 1;  // AWAKE_AWAKE
+    case 'asleep':            return 0;  // AWAKE_ASLEEP
+    case 'waiting_for_sleep': return 2;  // AWAKE_WAITING
+    default:                  return -1; // AWAKE_UNKNOWN
+  }
+}
+
 // ---- State fetch ----
 function refreshState() {
+  // Power status is a separate, cheap endpoint that does NOT wake the car.
+  tessie('GET', '/status', function (serr, st) {
+    var awake = awakeCode(st && st.status);
+    refreshVehicleData(awake);
+  });
+}
+
+function refreshVehicleData(awake) {
   // use_cache=false ensures we get a live read where possible
   tessie('GET', '/state?use_cache=false', function (err, s) {
     if (err) { sendError(err); return; }
@@ -92,22 +111,41 @@ function refreshState() {
       CLIMATE_ON:  climate.is_climate_on ? 1 : 0,
       INSIDE_TEMP: maybeF(insideC),
       TARGET_TEMP: maybeF(targetC),
-      ONLINE:      (s.state === 'online') ? 1 : 0
+      ONLINE:      (s.state === 'online') ? 1 : 0,
+      AWAKE:       awake
     });
   });
 }
 
 // ---- Command dispatch ----
-function doCommand(path, okMsg) {
-  tessie('POST', path + '?wait_for_completion=true', function (err, data) {
+// Tesla commands only succeed when the car is awake. Check status; if it isn't
+// awake, POST /wake (Tessie blocks up to 90s, then returns result:false) before
+// running `then`.
+function ensureAwake(then) {
+  tessie('GET', '/status', function (err, st) {
     if (err) { sendError(err); return; }
-    if (data && data.result === false) {
-      sendError('Command rejected');
-      return;
-    }
-    sendToWatch({ STATUS: okMsg });
-    // re-read state so the watch reflects reality
-    setTimeout(refreshState, 800);
+    if (st && st.status === 'awake') { then(); return; }
+    sendToWatch({ STATUS: 'Waking…' });
+    tessie('POST', '/wake', function (werr, wd) {
+      if (werr) { sendError(werr); return; }
+      if (wd && wd.result === false) { sendError('Wake timed out'); return; }
+      then();
+    }, 95000);
+  });
+}
+
+function doCommand(path, okMsg) {
+  ensureAwake(function () {
+    tessie('POST', path + '?wait_for_completion=true', function (err, data) {
+      if (err) { sendError(err); return; }
+      if (data && data.result === false) {
+        sendError('Command rejected');
+        return;
+      }
+      sendToWatch({ STATUS: okMsg });
+      // re-read state so the watch reflects reality
+      setTimeout(refreshState, 800);
+    });
   });
 }
 
@@ -116,11 +154,13 @@ function setTemperature(deltaC) {
   var base = cfg.lastTarget;            // stored in °C
   var next = Math.max(15, Math.min(28, base + deltaC));
   localStorage.setItem('last_target', String(next));
-  // Tessie Set Temperature expects Celsius via ?temperature=
-  tessie('POST', '/command/set_temperature?temperature=' + next, function (err, data) {
-    if (err) { sendError(err); return; }
-    sendToWatch({ STATUS: 'Set ' + next + '°C' });
-    setTimeout(refreshState, 800);
+  ensureAwake(function () {
+    // Tessie Set Temperature expects Celsius via ?temperature=
+    tessie('POST', '/command/set_temperature?temperature=' + next, function (err, data) {
+      if (err) { sendError(err); return; }
+      sendToWatch({ STATUS: 'Set ' + next + '°C' });
+      setTimeout(refreshState, 800);
+    });
   });
 }
 
@@ -205,7 +245,12 @@ function buildConfigHtml(cfg) {
     'var f=document.getElementById("usef").checked;' +
     'var out={vin:v,useFahrenheit:f};' +
     'if(t&&t.indexOf("•")===-1){out.token=t;}' + // only overwrite token if user typed a new one
-    'location.href="pebblejs://close#"+encodeURIComponent(JSON.stringify(out));' +
+    // Honor return_to when the platform supplies it (the emulator passes a
+    // localhost capture URL); fall back to the pebblejs://close scheme that the
+    // real phone app intercepts.
+    'var rt=(location.href.match(/[?&]return_to=([^&#]*)/)||[])[1];' +
+    'var base=rt?decodeURIComponent(rt):"pebblejs://close#";' +
+    'location.href=base+encodeURIComponent(JSON.stringify(out));' +
     '}' +
     '</scr' + 'ipt></body></html>';
 }
@@ -221,6 +266,8 @@ if (typeof module !== 'undefined' && module.exports) {
     doCommand: doCommand,
     setTemperature: setTemperature,
     handleCommand: handleCommand,
+    ensureAwake: ensureAwake,
+    awakeCode: awakeCode,
     buildConfigHtml: buildConfigHtml
   };
 }

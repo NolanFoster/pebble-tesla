@@ -10,7 +10,7 @@ void tearDown(void) {}
 static VehicleState base(void) {
   VehicleState s = { .battery = 84, .range = 240, .inside_temp = 21,
                      .target_temp = 22, .locked = true, .climate_on = true,
-                     .online = true };
+                     .online = true, .awake = AWAKE_AWAKE };
   return s;
 }
 
@@ -73,6 +73,25 @@ void test_toggle_labels_and_commands(void) {
   TEST_ASSERT_EQUAL_INT(CMD_CLIMATE_ON, climate_toggle_cmd(&s));
 }
 
+void test_awake_label(void) {
+  TEST_ASSERT_EQUAL_STRING("Awake", awake_label(AWAKE_AWAKE));
+  TEST_ASSERT_EQUAL_STRING("Asleep", awake_label(AWAKE_ASLEEP));
+  TEST_ASSERT_EQUAL_STRING("Waiting for sleep", awake_label(AWAKE_WAITING));
+  TEST_ASSERT_EQUAL_STRING("—", awake_label(AWAKE_UNKNOWN));
+  TEST_ASSERT_EQUAL_STRING("—", awake_label(99));
+}
+
+void test_power_subtitle(void) {
+  char buf[40];
+  VehicleState s = base();
+  s.awake = AWAKE_AWAKE;
+  fmt_power_subtitle(&s, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("Awake", buf);
+  s.awake = AWAKE_WAITING;
+  fmt_power_subtitle(&s, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("Waiting for sleep", buf);
+}
+
 void test_small_buffer_is_null_terminated(void) {
   char buf[8];
   VehicleState s = base();
@@ -87,6 +106,8 @@ int main(void) {
   RUN_TEST(test_lock_subtitle);
   RUN_TEST(test_climate_subtitle);
   RUN_TEST(test_toggle_labels_and_commands);
+  RUN_TEST(test_awake_label);
+  RUN_TEST(test_power_subtitle);
   RUN_TEST(test_small_buffer_is_null_terminated);
   return UNITY_END();
 }

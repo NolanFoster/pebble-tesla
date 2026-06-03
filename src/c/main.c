@@ -11,6 +11,7 @@
 #define KEY_INSIDE_TEMP  MESSAGE_KEY_INSIDE_TEMP
 #define KEY_TARGET_TEMP  MESSAGE_KEY_TARGET_TEMP
 #define KEY_ONLINE       MESSAGE_KEY_ONLINE
+#define KEY_AWAKE        MESSAGE_KEY_AWAKE
 #define KEY_ERROR        MESSAGE_KEY_ERROR
 #define KEY_TEMP_DELTA   MESSAGE_KEY_TEMP_DELTA
 
@@ -24,6 +25,7 @@ static bool     s_climate_on  = false;
 static int      s_inside_temp = 0;
 static int      s_target_temp = 0;
 static bool     s_online      = false;
+static int      s_awake       = AWAKE_UNKNOWN;
 static char     s_error[64]   = "";
 
 // ---- UI ----
@@ -94,7 +96,8 @@ static void show_status(const char *msg, uint32_t dismiss_ms) {
 enum { SEC_STATUS = 0, SEC_ACTIONS = 1, NUM_SECTIONS };
 
 enum {
-  ROW_BATTERY = 0,
+  ROW_POWER = 0,        // awake / asleep / waiting for sleep
+  ROW_BATTERY,
   ROW_LOCK_STATE,
   ROW_CLIMATE_STATE,
   NUM_STATUS_ROWS
@@ -135,6 +138,7 @@ static VehicleState current_state(void) {
     .battery = s_battery, .range = s_range,
     .inside_temp = s_inside_temp, .target_temp = s_target_temp,
     .locked = s_locked, .climate_on = s_climate_on, .online = s_online,
+    .awake = s_awake,
   };
 }
 
@@ -148,6 +152,10 @@ static void menu_draw_row(GContext *gctx, const Layer *cell,
 
   if (idx->section == SEC_STATUS) {
     switch (idx->row) {
+      case ROW_POWER:
+        snprintf(title, sizeof(title), "Vehicle");
+        fmt_power_subtitle(&st, subtitle, sizeof(subtitle));
+        break;
       case ROW_BATTERY:
         snprintf(title, sizeof(title), "Battery");
         fmt_battery_subtitle(&st, subtitle, sizeof(subtitle));
@@ -236,9 +244,14 @@ static void send_command(TeslaCommand cmd, int arg) {
     show_status("Phone busy", 1500);
     return;
   }
-  dict_write_int(it, KEY_CMD, &cmd, sizeof(int), true);
+  // TeslaCommand is a narrow enum: arm-none-eabi-gcc defaults to -fshort-enums,
+  // so `cmd` occupies 1 byte. Writing &cmd with sizeof(int)=4 would read 3 bytes
+  // of adjacent stack garbage into the high bytes (the watch sent 2 but the phone
+  // saw 0xE1980002). Copy into a real int32 whose width matches the requested size.
+  int32_t cmd_val = (int32_t)cmd;
+  dict_write_int(it, KEY_CMD, &cmd_val, sizeof(cmd_val), true);
   if (cmd_has_temp_delta(cmd)) {
-    dict_write_int(it, KEY_TEMP_DELTA, &arg, sizeof(int), true);
+    dict_write_int(it, KEY_TEMP_DELTA, &arg, sizeof(arg), true);
   }
   app_message_outbox_send();
 }
@@ -264,9 +277,15 @@ static void inbox_received(DictionaryIterator *it, void *ctx) {
   if ((t = dict_find(it, KEY_INSIDE_TEMP))) { s_inside_temp = t->value->int32; got_state = true; }
   if ((t = dict_find(it, KEY_TARGET_TEMP))) { s_target_temp = t->value->int32; got_state = true; }
   if ((t = dict_find(it, KEY_ONLINE)))      { s_online = t->value->int32 != 0; got_state = true; }
+  if ((t = dict_find(it, KEY_AWAKE)))       { s_awake = t->value->int32; got_state = true; }
 
   if (got_state && s_menu_layer) {
     menu_layer_reload_data(s_menu_layer);
+    // A fresh state read means any in-flight "Refreshing…/…ing" overlay is done.
+    // Refresh replies carry no STATUS, so without this the overlay (shown with
+    // dismiss_ms=0) would stay up forever and swallow further button presses.
+    if (s_status_timer) { app_timer_cancel(s_status_timer); s_status_timer = NULL; }
+    dismiss_status(NULL);
   }
 }
 
