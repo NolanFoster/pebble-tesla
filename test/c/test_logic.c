@@ -92,6 +92,12 @@ void test_power_subtitle(void) {
   TEST_ASSERT_EQUAL_STRING("Waiting for sleep", buf);
 }
 
+void test_status_header_text(void) {
+  TEST_ASSERT_EQUAL_STRING("Status", status_header_text(NULL));
+  TEST_ASSERT_EQUAL_STRING("Status", status_header_text(""));
+  TEST_ASSERT_EQUAL_STRING("Bumblebee", status_header_text("Bumblebee"));
+}
+
 void test_small_buffer_is_null_terminated(void) {
   char buf[8];
   VehicleState s = base();
@@ -108,6 +114,7 @@ int main(void) {
   RUN_TEST(test_toggle_labels_and_commands);
   RUN_TEST(test_awake_label);
   RUN_TEST(test_power_subtitle);
+  RUN_TEST(test_status_header_text);
   RUN_TEST(test_small_buffer_is_null_terminated);
   return UNITY_END();
 }
