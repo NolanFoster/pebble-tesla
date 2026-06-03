@@ -4,7 +4,9 @@
 Icons are white foreground on a transparent background, sized for Pebble's
 ActionBarLayer column. Everything is drawn inside a SAFE content box that
 leaves a margin on all sides so the action bar never clips the glyph, then
-supersampled and downscaled once for smooth edges. Run from the repo root:
+supersampled and downscaled once to the output footprint for smooth edges.
+The glyphs are drawn on a 25px design grid but emitted at OUT px so they fill
+more of the 30px action-bar column. Run from the repo root:
 
     python3 tools/gen_icons.py
 
@@ -17,10 +19,13 @@ import os
 
 from PIL import Image, ImageDraw
 
-ICON = 25                          # output footprint (px)
+ICON = 25                          # design grid (drawing coordinates)
+OUT = 28                           # output footprint (px) — fills more of the
+                                   # 30px action-bar column without clipping
 MARGIN = 3                         # keep glyphs this far from every edge
 SS = 12                            # supersample factor for smooth curves
 B = ICON * SS                      # big working-canvas size
+KOUT = OUT / ICON                  # design-grid -> output-px scale factor
 WHITE = (255, 255, 255, 255)
 CLEAR = (0, 0, 0, 0)
 OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "resources", "images")
@@ -42,7 +47,7 @@ def new_big():
 
 
 def finish(img):
-    return img.resize((ICON, ICON), Image.LANCZOS)
+    return img.resize((OUT, OUT), Image.LANCZOS)
 
 
 def save(img, name):
@@ -106,10 +111,12 @@ def fan(on):
     d.ellipse((s(CX - 1), s(CY - 1), s(CX + 1), s(CY + 1)), fill=CLEAR)
     out = finish(img)
     if not on:
-        # Diagonal slash: clear cut with a thin white outline so it reads anywhere.
+        # Diagonal slash: clear cut with a thin white outline so it reads
+        # anywhere. Drawn in output-px space, so scale the design coords by KOUT.
         d2 = ImageDraw.Draw(out)
-        d2.line((LO + 1, HI - 1, HI - 1, LO + 1), fill=CLEAR, width=5)
-        d2.line((LO + 1, HI - 1, HI - 1, LO + 1), fill=WHITE, width=2)
+        p = ((LO + 1) * KOUT, (HI - 1) * KOUT, (HI - 1) * KOUT, (LO + 1) * KOUT)
+        d2.line(p, fill=CLEAR, width=round(5 * KOUT))
+        d2.line(p, fill=WHITE, width=round(2 * KOUT))
     return out
 
 
