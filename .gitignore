@@ -2,6 +2,7 @@
 build/
 *.pbw
 .pebble-cache/
+.lock-waf_*_build
 
 # Node (PebbleKit JS tooling)
 node_modules/
