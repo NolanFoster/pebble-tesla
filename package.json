@@ -22,6 +22,7 @@
     "uuid": "a1b2c3d4-e5f6-4a5b-8c7d-0e1f2a3b4c5d",
     "sdkVersion": "3",
     "enableMultiJS": true,
+    "capabilities": ["configurable"],
     "targetPlatforms": ["basalt", "chalk", "diorite", "emery"],
     "watchapp": {
       "watchface": false
