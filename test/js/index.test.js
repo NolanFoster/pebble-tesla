@@ -302,10 +302,10 @@ describe('doCommand', function () {
       { ERROR: 'Command rejected' }, expect.any(Function), expect.any(Function));
   });
 
-  test('confirms success then schedules a refresh', function () {
+  test('confirms success then re-reads /state, stopping once it settles', function () {
     jest.useFakeTimers();
     var m = load(CONFIGURED);
-    m.doCommand('/command/lock', 'Locked');
+    m.handleCommand(m.CMD.LOCK); // via handleCommand so the isLocked predicate is wired
     ackStatus('awake');
     global.XMLHttpRequest.last().respond(200, { result: true });
     expect(global.Pebble.sendAppMessage).toHaveBeenCalledWith(
@@ -313,9 +313,42 @@ describe('doCommand', function () {
 
     var before = global.XMLHttpRequest.instances.length;
     jest.advanceTimersByTime(800);
-    var after = global.XMLHttpRequest.instances.length;
-    expect(after).toBe(before + 1); // refreshState fired a new GET (the /status precheck)
-    expect(global.XMLHttpRequest.last().url).toContain('/status');
+    var read = global.XMLHttpRequest.last();
+    expect(global.XMLHttpRequest.instances.length).toBe(before + 1);
+    expect(read.url).toContain('/state?use_cache=false'); // reads state directly, no /status
+    // state now reflects the lock -> polling stops
+    read.respond(200, { vehicle_state: { locked: true } });
+    jest.advanceTimersByTime(5000);
+    expect(global.XMLHttpRequest.instances.length).toBe(before + 1);
+  });
+
+  test('keeps polling while the car still reports the old value', function () {
+    jest.useFakeTimers();
+    var m = load(CONFIGURED);
+    m.handleCommand(m.CMD.LOCK);
+    ackStatus('awake');
+    global.XMLHttpRequest.last().respond(200, { result: true });
+
+    jest.advanceTimersByTime(800);
+    // first read is stale (still unlocked) -> schedules another read
+    global.XMLHttpRequest.last().respond(200, { vehicle_state: { locked: false } });
+    var afterFirst = global.XMLHttpRequest.instances.length;
+    jest.advanceTimersByTime(1500);
+    expect(global.XMLHttpRequest.instances.length).toBe(afterFirst + 1);
+    expect(global.XMLHttpRequest.last().url).toContain('/state?use_cache=false');
+  });
+
+  test('commands with no status row read state just once', function () {
+    jest.useFakeTimers();
+    var m = load(CONFIGURED);
+    m.handleCommand(m.CMD.FRUNK); // frunk has no observable status row -> no predicate
+    ackStatus('awake');
+    global.XMLHttpRequest.last().respond(200, { result: true });
+    jest.advanceTimersByTime(800);
+    global.XMLHttpRequest.last().respond(200, {});
+    var n = global.XMLHttpRequest.instances.length;
+    jest.advanceTimersByTime(5000);
+    expect(global.XMLHttpRequest.instances.length).toBe(n); // no further polling
   });
 
   test('wakes a sleeping car before sending the command', function () {
