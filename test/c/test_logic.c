@@ -90,6 +90,24 @@ void test_battery_pct_and_range(void) {
   TEST_ASSERT_EQUAL_STRING("", buf);
 }
 
+void test_battery_num(void) {
+  char buf[16];
+  VehicleState s = base();
+
+  s.battery = 84;
+  fmt_battery_num(&s, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("84", buf);
+  s.battery = 0;
+  fmt_battery_num(&s, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("0", buf);
+  s.battery = 100;
+  fmt_battery_num(&s, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("100", buf);
+  s.battery = -1;
+  fmt_battery_num(&s, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("—", buf);
+}
+
 void test_battery_level(void) {
   TEST_ASSERT_EQUAL_INT(BATTERY_UNKNOWN, battery_level(-1));
   TEST_ASSERT_EQUAL_INT(BATTERY_LOW,     battery_level(0));
@@ -154,6 +172,7 @@ int main(void) {
   RUN_TEST(test_climate_subtitle);
   RUN_TEST(test_toggle_labels_and_commands);
   RUN_TEST(test_battery_pct_and_range);
+  RUN_TEST(test_battery_num);
   RUN_TEST(test_battery_level);
   RUN_TEST(test_toggle_icons);
   RUN_TEST(test_awake_label);

@@ -113,13 +113,74 @@ def fan(on):
     return out
 
 
+def thermometer(up):
+    """Thermometer (tube + bulb) with an up/down arrow for the temp ± rows."""
+    img, d = new_big()
+    tx = 9.0                                   # tube on the left
+    w = 3.0
+    d.rounded_rectangle((s(tx - w / 2), s(LO + 1), s(tx + w / 2), s(17)),
+                        radius=s(w / 2), fill=WHITE)
+    br = 3.3                                    # bulb
+    d.ellipse((s(tx - br), s(17 - br + 1), s(tx + br), s(17 + br + 1)), fill=WHITE)
+    ax = 17                                     # arrow on the right
+    aw = int(2.0 * SS)
+    if up:
+        d.line((s(ax), s(HI), s(ax), s(LO + 2)), fill=WHITE, width=aw)
+        d.polygon([(s(ax), s(LO - 1)), (s(ax - 3), s(LO + 4)), (s(ax + 3), s(LO + 4))], fill=WHITE)
+    else:
+        d.line((s(ax), s(LO + 1), s(ax), s(HI - 1)), fill=WHITE, width=aw)
+        d.polygon([(s(ax), s(HI + 1)), (s(ax - 3), s(HI - 4)), (s(ax + 3), s(HI - 4))], fill=WHITE)
+    return finish(img)
+
+
+def car(front):
+    """Car side profile; the front (frunk) or rear (trunk) lid is raised open."""
+    img, d = new_big()
+    d.rounded_rectangle((s(LO + 1), s(11), s(HI - 1), s(16)), radius=s(1.5), fill=WHITE)
+    wr = 2.3                                    # wheels
+    for wx in (8, 17):
+        d.ellipse((s(wx - wr), s(16 - wr + 1), s(wx + wr), s(16 + wr + 1)), fill=WHITE)
+    lw = int(2.2 * SS)                          # raised lid wedge
+    if front:
+        d.line((s(LO + 1), s(11), s(8), s(LO + 2)), fill=WHITE, width=lw)
+    else:
+        d.line((s(HI - 1), s(11), s(17), s(LO + 2)), fill=WHITE, width=lw)
+    return finish(img)
+
+
+def bolt():
+    """Charge port: a lightning bolt."""
+    img, d = new_big()
+    pts = [(14, LO), (8, 13), (12, 13), (11, HI), (17, 10), (13, 10)]
+    d.polygon([(s(x), s(y)) for x, y in pts], fill=WHITE)
+    return finish(img)
+
+
+def refresh():
+    """Refresh: a ~300° circular arrow with an arrowhead at the open end."""
+    img, d = new_big()
+    r = RMAX - 1
+    bbox = (s(CX - r), s(CY - r), s(CX + r), s(CY + r))
+    d.arc(bbox, start=300, end=210, fill=WHITE, width=int(2.6 * SS))
+    ax = CX + r * math.cos(math.radians(300))
+    ay = CY + r * math.sin(math.radians(300))
+    d.polygon([(s(ax - 3), s(ay)), (s(ax + 3), s(ay)), (s(ax), s(ay - 4))], fill=WHITE)
+    return finish(img)
+
+
 def main():
     save(padlock(locked=True), "locked.png")
     save(padlock(locked=False), "unlocked.png")
     save(gear(), "settings.png")
     save(fan(on=True), "climate_on.png")
     save(fan(on=False), "climate_off.png")
-    print("Wrote 5 icons to", os.path.normpath(OUT_DIR))
+    save(thermometer(up=True), "temp_up.png")
+    save(thermometer(up=False), "temp_down.png")
+    save(car(front=True), "frunk.png")
+    save(car(front=False), "trunk.png")
+    save(bolt(), "charge.png")
+    save(refresh(), "refresh.png")
+    print("Wrote 11 icons to", os.path.normpath(OUT_DIR))
 
 
 if __name__ == "__main__":
