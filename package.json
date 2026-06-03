@@ -4,7 +4,19 @@
   "version": "1.0.0",
   "keywords": ["pebble-app"],
   "private": true,
+  "scripts": {
+    "test": "jest",
+    "test:js": "jest",
+    "test:c": "make test-c",
+    "test:all": "npm run test:js && npm run test:c"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {},
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
   "pebble": {
     "displayName": "Tesla Control",
     "uuid": "a1b2c3d4-e5f6-4a5b-8c7d-0e1f2a3b4c5d",

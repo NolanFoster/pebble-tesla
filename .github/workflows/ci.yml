@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# The emulator/integration tests (test/emulator/) are intentionally NOT run in
+# CI: they need the Rebble pebble-tool + QEMU, which aren't available here.
+# Run them locally with: bash test/emulator/run_integration.sh
+
+jobs:
+  js:
+    name: JS unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci || npm install
+      - run: npm run test:js
+
+  c:
+    name: C unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y build-essential
+      - run: make test-c
