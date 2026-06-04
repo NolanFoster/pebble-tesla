@@ -17,8 +17,9 @@ import os
 
 from PIL import Image, ImageDraw
 
-ICON = 25                          # output footprint (px)
-MARGIN = 3                         # keep glyphs this far from every edge
+ICON = 28                          # output footprint (px); the bar is 30px, so a
+                                   # 28px bitmap centers with ~1px slack each side
+MARGIN = 2                         # keep glyphs this far from every edge
 SS = 12                            # supersample factor for smooth curves
 B = ICON * SS                      # big working-canvas size
 WHITE = (255, 255, 255, 255)
@@ -26,9 +27,9 @@ CLEAR = (0, 0, 0, 0)
 OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "resources", "images")
 
 # Safe drawing region in output px: [MARGIN, ICON - MARGIN].
-LO, HI = MARGIN, ICON - MARGIN     # 3 .. 22
-CX = CY = ICON / 2                 # center (12.5)
-RMAX = (ICON / 2) - MARGIN         # max radius from center that stays in bounds (9.5)
+LO, HI = MARGIN, ICON - MARGIN     # 2 .. 26
+CX = CY = ICON / 2                 # center (14)
+RMAX = (ICON / 2) - MARGIN         # max radius from center that stays in bounds (12)
 
 
 def s(v):
@@ -51,24 +52,38 @@ def save(img, name):
 
 
 def padlock(locked):
-    """Padlock: body + shackle. Shackle lifts/detaches on one side when unlocked."""
+    """Padlock: body + shackle. Shackle lifts/detaches on one side when unlocked.
+
+    Everything is laid out relative to CX so the glyph grows with the safe box
+    instead of sitting in a fixed (and narrow) pixel rectangle.
+    """
     img, d = new_big()
-    # Body (kept within the safe box)
-    d.rounded_rectangle((s(6), s(12), s(19), s(HI)), radius=s(2), fill=WHITE)
-    # Keyhole punched out of the white body
-    d.ellipse((s(10.5), s(14.5), s(14.5), s(18.5)), fill=CLEAR)
-    d.polygon([(s(12), s(17)), (s(11), s(21)), (s(14), s(21)), (s(13), s(17))], fill=CLEAR)
-    w = int(2.2 * SS)
+    body_hw = RMAX - 2.5       # body half-width: wide, just inside the safe box
+    body_top = CY - 0.5        # body occupies the lower half
+    sh_hw = body_hw - 3.0      # shackle is narrower than the body
+    w = int(2.6 * SS)          # shackle stroke
+    # Body (a wide rounded block filling most of the safe width)
+    d.rounded_rectangle((s(CX - body_hw), s(body_top), s(CX + body_hw), s(HI)),
+                        radius=s(3), fill=WHITE)
+    # Keyhole punched out of the white body (circle + tapered slot)
+    kc = body_top + 3.6
+    d.ellipse((s(CX - 2.4), s(kc - 2.3), s(CX + 2.4), s(kc + 2.3)), fill=CLEAR)
+    d.polygon([(s(CX - 0.9), s(kc)), (s(CX - 1.9), s(HI - 1.5)),
+               (s(CX + 1.9), s(HI - 1.5)), (s(CX + 0.9), s(kc))], fill=CLEAR)
     if locked:
         # Closed arch seated on the body, both legs down.
-        d.arc((s(7.5), s(LO + 1), s(17.5), s(13)), start=180, end=360, fill=WHITE, width=w)
-        d.line((s(7.5), s(9), s(7.5), s(12)), fill=WHITE, width=w)
-        d.line((s(17.5), s(9), s(17.5), s(12)), fill=WHITE, width=w)
+        d.arc((s(CX - sh_hw), s(LO + 1), s(CX + sh_hw), s(body_top + 2)),
+              start=180, end=360, fill=WHITE, width=w)
+        d.line((s(CX - sh_hw), s(CY - 4), s(CX - sh_hw), s(body_top + 0.5)), fill=WHITE, width=w)
+        d.line((s(CX + sh_hw), s(CY - 4), s(CX + sh_hw), s(body_top + 0.5)), fill=WHITE, width=w)
     else:
         # Open: shackle rotated, right leg lifted clear of the body.
-        d.arc((s(7), s(LO), s(17), s(12)), start=170, end=350, fill=WHITE, width=w)
-        d.line((s(7), s(8), s(7), s(12)), fill=WHITE, width=w)   # left leg seated
-        d.line((s(17), s(8), s(17), s(10)), fill=WHITE, width=w)  # right leg lifted
+        d.arc((s(CX - sh_hw - 0.5), s(LO), s(CX + sh_hw - 0.5), s(body_top + 1)),
+              start=170, end=350, fill=WHITE, width=w)
+        d.line((s(CX - sh_hw - 0.5), s(CY - 5), s(CX - sh_hw - 0.5), s(body_top + 0.5)),
+               fill=WHITE, width=w)                                  # left leg seated
+        d.line((s(CX + sh_hw - 0.5), s(CY - 5), s(CX + sh_hw - 0.5), s(CY - 2.5)),
+               fill=WHITE, width=w)                                  # right leg lifted
     return finish(img)
 
 
