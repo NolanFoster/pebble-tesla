@@ -181,17 +181,30 @@ def thermometer(up):
 
 
 def car(front):
-    """Car side profile; the front (frunk) or rear (trunk) lid is raised open."""
+    """Car side profile; the front (frunk) or rear (trunk) lid is raised open.
+
+    A proper silhouette — lower body + sloped cabin/roofline + two wheels — so
+    the glyph reads as a car rather than a slab, with one end's lid lifted to
+    show which compartment opens (front = frunk, rear = trunk).
+    """
     img, d = new_big()
-    d.rounded_rectangle((s(LO + 1), s(11), s(HI - 1), s(16)), radius=s(1.5), fill=WHITE)
-    wr = 2.3                                    # wheels
-    for wx in (8, 17):
-        d.ellipse((s(wx - wr), s(16 - wr + 1), s(wx + wr), s(16 + wr + 1)), fill=WHITE)
-    lw = int(2.2 * SS)                          # raised lid wedge
+    # Wheels first, sitting on the baseline just inside the safe box.
+    wr = 2.4
+    wy = 19.0
+    for wx in (8.0, 17.0):
+        d.ellipse((s(wx - wr), s(wy - wr), s(wx + wr), s(wy + wr)), fill=WHITE)
+    # Body + cabin as one filled silhouette (front at left, rear at right).
+    body = [
+        (4.0, 18.0), (4.0, 13.5), (8.5, 13.5), (10.5, 9.5),
+        (15.5, 9.5), (17.5, 13.5), (21.0, 13.5), (21.0, 18.0),
+    ]
+    d.polygon([(s(x), s(y)) for x, y in body], fill=WHITE)
+    # Raised lid: a thick angled panel hinged at the cabin, lifting at one end.
+    lw = int(2.4 * SS)
     if front:
-        d.line((s(LO + 1), s(11), s(8), s(LO + 2)), fill=WHITE, width=lw)
-    else:
-        d.line((s(HI - 1), s(11), s(17), s(LO + 2)), fill=WHITE, width=lw)
+        d.line((s(8.5), s(13.5), s(4.0), s(7.0)), fill=WHITE, width=lw)
+    else:  # rear hatch
+        d.line((s(17.5), s(13.5), s(21.0), s(7.0)), fill=WHITE, width=lw)
     return finish(img)
 
 
