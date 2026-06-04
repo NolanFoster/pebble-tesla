@@ -20,9 +20,12 @@ import os
 from PIL import Image, ImageDraw
 
 ICON = 25                          # design grid (drawing coordinates)
-OUT = 28                           # output footprint (px) — fills more of the
-                                   # 30px action-bar column without clipping
-MARGIN = 3                         # keep glyphs this far from every edge
+OUT = 18                           # output footprint (px). Pebble's action bar
+                                   # clips icons taller than 18px, so this is the
+                                   # tallest a glyph can be without being cut off.
+MARGIN = 2                         # keep glyphs this far from every edge; with
+                                   # OUT=18 this lands the visual core near the
+                                   # ~15px Pebble recommends.
 SS = 12                            # supersample factor for smooth curves
 B = ICON * SS                      # big working-canvas size
 KOUT = OUT / ICON                  # design-grid -> output-px scale factor
@@ -30,10 +33,10 @@ WHITE = (255, 255, 255, 255)
 CLEAR = (0, 0, 0, 0)
 OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "resources", "images")
 
-# Safe drawing region in output px: [MARGIN, ICON - MARGIN].
-LO, HI = MARGIN, ICON - MARGIN     # 3 .. 22
+# Safe drawing region in design-grid px: [MARGIN, ICON - MARGIN].
+LO, HI = MARGIN, ICON - MARGIN     # 2 .. 23
 CX = CY = ICON / 2                 # center (12.5)
-RMAX = (ICON / 2) - MARGIN         # max radius from center that stays in bounds (9.5)
+RMAX = (ICON / 2) - MARGIN         # max radius from center that stays in bounds (10.5)
 
 
 def s(v):
