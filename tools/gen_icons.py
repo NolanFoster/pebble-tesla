@@ -4,7 +4,9 @@
 Icons are white foreground on a transparent background, sized for Pebble's
 ActionBarLayer column. Everything is drawn inside a SAFE content box that
 leaves a margin on all sides so the action bar never clips the glyph, then
-supersampled and downscaled once for smooth edges. Run from the repo root:
+supersampled and downscaled once to the output footprint for smooth edges.
+The glyphs are drawn on a 25px design grid but emitted at OUT px so they fill
+more of the 30px action-bar column. Run from the repo root:
 
     python3 tools/gen_icons.py
 
@@ -17,19 +19,24 @@ import os
 
 from PIL import Image, ImageDraw
 
-ICON = 28                          # output footprint (px); the bar is 30px, so a
-                                   # 28px bitmap centers with ~1px slack each side
-MARGIN = 2                         # keep glyphs this far from every edge
+ICON = 25                          # design grid (drawing coordinates)
+OUT = 18                           # output footprint (px). Pebble's action bar
+                                   # clips icons taller than 18px, so this is the
+                                   # tallest a glyph can be without being cut off.
+MARGIN = 2                         # keep glyphs this far from every edge; with
+                                   # OUT=18 this lands the visual core near the
+                                   # ~15px Pebble recommends.
 SS = 12                            # supersample factor for smooth curves
 B = ICON * SS                      # big working-canvas size
+KOUT = OUT / ICON                  # design-grid -> output-px scale factor
 WHITE = (255, 255, 255, 255)
 CLEAR = (0, 0, 0, 0)
 OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "resources", "images")
 
-# Safe drawing region in output px: [MARGIN, ICON - MARGIN].
-LO, HI = MARGIN, ICON - MARGIN     # 2 .. 26
-CX = CY = ICON / 2                 # center (14)
-RMAX = (ICON / 2) - MARGIN         # max radius from center that stays in bounds (12)
+# Safe drawing region in design-grid px: [MARGIN, ICON - MARGIN].
+LO, HI = MARGIN, ICON - MARGIN     # 2 .. 23
+CX = CY = ICON / 2                 # center (12.5)
+RMAX = (ICON / 2) - MARGIN         # max radius from center that stays in bounds (10.5)
 
 
 def s(v):
@@ -43,7 +50,7 @@ def new_big():
 
 
 def finish(img):
-    return img.resize((ICON, ICON), Image.LANCZOS)
+    return img.resize((OUT, OUT), Image.LANCZOS)
 
 
 def save(img, name):
@@ -121,11 +128,68 @@ def fan(on):
     d.ellipse((s(CX - 1), s(CY - 1), s(CX + 1), s(CY + 1)), fill=CLEAR)
     out = finish(img)
     if not on:
-        # Diagonal slash: clear cut with a thin white outline so it reads anywhere.
+        # Diagonal slash: clear cut with a thin white outline so it reads
+        # anywhere. Drawn in output-px space, so scale the design coords by KOUT.
         d2 = ImageDraw.Draw(out)
-        d2.line((LO + 1, HI - 1, HI - 1, LO + 1), fill=CLEAR, width=5)
-        d2.line((LO + 1, HI - 1, HI - 1, LO + 1), fill=WHITE, width=2)
+        p = ((LO + 1) * KOUT, (HI - 1) * KOUT, (HI - 1) * KOUT, (LO + 1) * KOUT)
+        d2.line(p, fill=CLEAR, width=round(5 * KOUT))
+        d2.line(p, fill=WHITE, width=round(2 * KOUT))
     return out
+
+
+def thermometer(up):
+    """Thermometer (tube + bulb) with an up/down arrow for the temp ± rows."""
+    img, d = new_big()
+    tx = 9.0                                   # tube on the left
+    w = 3.0
+    d.rounded_rectangle((s(tx - w / 2), s(LO + 1), s(tx + w / 2), s(17)),
+                        radius=s(w / 2), fill=WHITE)
+    br = 3.3                                    # bulb
+    d.ellipse((s(tx - br), s(17 - br + 1), s(tx + br), s(17 + br + 1)), fill=WHITE)
+    ax = 17                                     # arrow on the right
+    aw = int(2.0 * SS)
+    if up:
+        d.line((s(ax), s(HI), s(ax), s(LO + 2)), fill=WHITE, width=aw)
+        d.polygon([(s(ax), s(LO - 1)), (s(ax - 3), s(LO + 4)), (s(ax + 3), s(LO + 4))], fill=WHITE)
+    else:
+        d.line((s(ax), s(LO + 1), s(ax), s(HI - 1)), fill=WHITE, width=aw)
+        d.polygon([(s(ax), s(HI + 1)), (s(ax - 3), s(HI - 4)), (s(ax + 3), s(HI - 4))], fill=WHITE)
+    return finish(img)
+
+
+def car(front):
+    """Car side profile; the front (frunk) or rear (trunk) lid is raised open."""
+    img, d = new_big()
+    d.rounded_rectangle((s(LO + 1), s(11), s(HI - 1), s(16)), radius=s(1.5), fill=WHITE)
+    wr = 2.3                                    # wheels
+    for wx in (8, 17):
+        d.ellipse((s(wx - wr), s(16 - wr + 1), s(wx + wr), s(16 + wr + 1)), fill=WHITE)
+    lw = int(2.2 * SS)                          # raised lid wedge
+    if front:
+        d.line((s(LO + 1), s(11), s(8), s(LO + 2)), fill=WHITE, width=lw)
+    else:
+        d.line((s(HI - 1), s(11), s(17), s(LO + 2)), fill=WHITE, width=lw)
+    return finish(img)
+
+
+def bolt():
+    """Charge port: a lightning bolt."""
+    img, d = new_big()
+    pts = [(14, LO), (8, 13), (12, 13), (11, HI), (17, 10), (13, 10)]
+    d.polygon([(s(x), s(y)) for x, y in pts], fill=WHITE)
+    return finish(img)
+
+
+def refresh():
+    """Refresh: a ~300° circular arrow with an arrowhead at the open end."""
+    img, d = new_big()
+    r = RMAX - 1
+    bbox = (s(CX - r), s(CY - r), s(CX + r), s(CY + r))
+    d.arc(bbox, start=300, end=210, fill=WHITE, width=int(2.6 * SS))
+    ax = CX + r * math.cos(math.radians(300))
+    ay = CY + r * math.sin(math.radians(300))
+    d.polygon([(s(ax - 3), s(ay)), (s(ax + 3), s(ay)), (s(ax), s(ay - 4))], fill=WHITE)
+    return finish(img)
 
 
 def main():
@@ -134,7 +198,13 @@ def main():
     save(gear(), "settings.png")
     save(fan(on=True), "climate_on.png")
     save(fan(on=False), "climate_off.png")
-    print("Wrote 5 icons to", os.path.normpath(OUT_DIR))
+    save(thermometer(up=True), "temp_up.png")
+    save(thermometer(up=False), "temp_down.png")
+    save(car(front=True), "frunk.png")
+    save(car(front=False), "trunk.png")
+    save(bolt(), "charge.png")
+    save(refresh(), "refresh.png")
+    print("Wrote 11 icons to", os.path.normpath(OUT_DIR))
 
 
 if __name__ == "__main__":
