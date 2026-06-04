@@ -40,15 +40,21 @@
       "AWAKE",
       "NAME",
       "ERROR",
-      "TEMP_DELTA"
+      "TEMP_DELTA",
+      "PAINT_COLOR"
     ],
     "resources": {
       "media": [
-        { "type": "bitmap", "name": "ICON_LOCKED",      "file": "images/locked.png" },
-        { "type": "bitmap", "name": "ICON_UNLOCKED",    "file": "images/unlocked.png" },
-        { "type": "bitmap", "name": "ICON_SETTINGS",    "file": "images/settings.png" },
-        { "type": "bitmap", "name": "ICON_CLIMATE_ON",  "file": "images/climate_on.png" },
-        { "type": "bitmap", "name": "ICON_CLIMATE_OFF", "file": "images/climate_off.png" }
+        { "type": "bitmap", "name": "ICON_LOCKED",            "file": "images/locked.png" },
+        { "type": "bitmap", "name": "ICON_UNLOCKED",          "file": "images/unlocked.png" },
+        { "type": "bitmap", "name": "ICON_SETTINGS",          "file": "images/settings.png" },
+        { "type": "bitmap", "name": "ICON_CLIMATE_ON",        "file": "images/climate_on.png" },
+        { "type": "bitmap", "name": "ICON_CLIMATE_OFF",       "file": "images/climate_off.png" },
+        { "type": "bitmap", "name": "ICON_LOCKED_DARK",       "file": "images/locked_black.png" },
+        { "type": "bitmap", "name": "ICON_UNLOCKED_DARK",     "file": "images/unlocked_black.png" },
+        { "type": "bitmap", "name": "ICON_SETTINGS_DARK",     "file": "images/settings_black.png" },
+        { "type": "bitmap", "name": "ICON_CLIMATE_ON_DARK",   "file": "images/climate_on_black.png" },
+        { "type": "bitmap", "name": "ICON_CLIMATE_OFF_DARK",  "file": "images/climate_off_black.png" }
       ]
     }
   }

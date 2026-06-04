@@ -53,6 +53,45 @@ describe('awakeCode', function () {
   });
 });
 
+describe('paintCode', function () {
+  function ext(name) { return { vehicle_config: { exterior_color: name } }; }
+  function code(c) { return { vehicle_config: { option_codes: c } }; }
+
+  test('maps friendly exterior_color names to PaintColor codes', function () {
+    var m = load(CONFIGURED);
+    expect(m.paintCode(ext('RedMulticoat'))).toBe(0);
+    expect(m.paintCode(ext('UltraRed'))).toBe(0);
+    expect(m.paintCode(ext('PearlWhite'))).toBe(1);
+    expect(m.paintCode(ext('SolidBlack'))).toBe(2);
+    expect(m.paintCode(ext('Obsidian Black'))).toBe(2);
+    expect(m.paintCode(ext('DeepBlue'))).toBe(5);
+    expect(m.paintCode(ext('MidnightSilver'))).toBe(4); // dark, despite "Silver"
+    expect(m.paintCode(ext('StealthGrey'))).toBe(4);
+    expect(m.paintCode(ext('SilverMetallic'))).toBe(3);
+    expect(m.paintCode(ext('Quicksilver'))).toBe(3);
+  });
+
+  test('reads red before "Midnight" so cherry red is not mistaken for grey', function () {
+    var m = load(CONFIGURED);
+    expect(m.paintCode(ext('MidnightCherryRed'))).toBe(0);
+  });
+
+  test('falls back to option_codes when no friendly name', function () {
+    var m = load(CONFIGURED);
+    expect(m.paintCode(code('PBSB,SC04,DV2W'))).toBe(2); // solid black
+    expect(m.paintCode(code('PPSW'))).toBe(1);           // pearl white
+    expect(m.paintCode(code('PMNG'))).toBe(4);           // midnight silver (grey)
+    expect(m.paintCode(code('PPSB'))).toBe(5);           // deep blue
+  });
+
+  test('returns -1 (unknown) when paint is absent or unrecognized', function () {
+    var m = load(CONFIGURED);
+    expect(m.paintCode({})).toBe(-1);
+    expect(m.paintCode({ vehicle_config: {} })).toBe(-1);
+    expect(m.paintCode(ext('Chartreuse'))).toBe(-1);
+  });
+});
+
 describe('tessie', function () {
   test('builds URL, auth header and default timeout', function () {
     var m = load(CONFIGURED);
@@ -183,6 +222,25 @@ describe('refreshState', function () {
       INSIDE_TEMP: 21, TARGET_TEMP: 22, ONLINE: 1, AWAKE: 1, NAME: 'Bumblebee'
     }, expect.any(Function), expect.any(Function));
     expect(global.localStorage.getItem('last_target')).toBe('22'); // stored in °C
+  });
+
+  test('includes PAINT_COLOR when the car paint is identifiable', function () {
+    var m = load(CONFIGURED);
+    m.refreshState();
+    ackStatus('awake');
+    global.XMLHttpRequest.last().respond(200,
+      Object.assign({ vehicle_config: { exterior_color: 'DeepBlue' } }, STATE));
+    var dict = global.Pebble.sendAppMessage.mock.calls[0][0];
+    expect(dict.PAINT_COLOR).toBe(5);
+  });
+
+  test('omits PAINT_COLOR when the paint is unknown (watch keeps its default)', function () {
+    var m = load(CONFIGURED);
+    m.refreshState();
+    ackStatus('awake');
+    global.XMLHttpRequest.last().respond(200, STATE); // no vehicle_config
+    var dict = global.Pebble.sendAppMessage.mock.calls[0][0];
+    expect('PAINT_COLOR' in dict).toBe(false);
   });
 
   test('reports the awake status independent of the state read', function () {

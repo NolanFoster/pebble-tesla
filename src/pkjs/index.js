@@ -80,6 +80,36 @@ function awakeCode(status) {
   }
 }
 
+// Map Tessie's exterior paint onto a PaintColor code (must match the PaintColor
+// enum in logic.h). Tessie reports the paint two ways: a friendly
+// vehicle_config.exterior_color string ("MidnightSilver", "DeepBlue", …) and a
+// comma-separated option_codes string ("PPSW,PMNG,…"). Prefer the friendly name;
+// fall back to the option code. Returns -1 (PAINT_UNKNOWN) when neither resolves,
+// which leaves the watch on its default accent. Order matters: "MidnightCherryRed"
+// must read as red (not the dark "Midnight…" grey), so red is matched first.
+function paintCode(s) {
+  var cfg = (s && s.vehicle_config) || {};
+  var name = String(cfg.exterior_color || '').toLowerCase();
+  if (name) {
+    if (/cherry|red/.test(name))                return 0; // PAINT_RED
+    if (/pearl|white/.test(name))               return 1; // PAINT_WHITE
+    if (/black|obsidian/.test(name))            return 2; // PAINT_BLACK
+    if (/blue/.test(name))                      return 5; // PAINT_BLUE
+    if (/midnight|stealth|gr[ae]y/.test(name))  return 4; // PAINT_GREY (dark)
+    if (/silver|quicksilver|titanium/.test(name)) return 3; // PAINT_SILVER (light)
+  }
+  var codes = String(cfg.option_codes || '').toUpperCase();
+  if (codes) {
+    if (/\b(PPMR|PR00|PR01|PRMR)\b/.test(codes)) return 0; // red
+    if (/\b(PPSW|PBCW|PMWH)\b/.test(codes))      return 1; // white
+    if (/\b(PBSB|PMBL)\b/.test(codes))           return 2; // black
+    if (/\b(PPSB|PMNS)\b/.test(codes))           return 5; // blue
+    if (/\b(PMNG|PN00)\b/.test(codes))           return 4; // dark grey
+    if (/\b(PMSS|PN01|PMTG)\b/.test(codes))      return 3; // silver
+  }
+  return -1; // PAINT_UNKNOWN
+}
+
 // ---- State fetch ----
 function refreshState() {
   // Power status is a separate, cheap endpoint that does NOT wake the car.
@@ -120,7 +150,7 @@ function pushState(s, awake) {
 
   function maybeF(c) { return cfg.useFahrenheit ? Math.round(c * 9 / 5 + 32) : c; }
 
-  sendToWatch({
+  var dict = {
     BATTERY:     charge.battery_level != null ? charge.battery_level : 0,
     RANGE:       charge.battery_range != null ? Math.round(charge.battery_range) : 0,
     LOCKED:      vehicle.locked ? 1 : 0,
@@ -130,7 +160,14 @@ function pushState(s, awake) {
     ONLINE:      (s.state === 'online') ? 1 : 0,
     AWAKE:       awake,
     NAME:        name
-  });
+  };
+
+  // Only send the paint color when we can identify it, so the watch keeps its
+  // default accent rather than being forced to a fallback on every refresh.
+  var paint = paintCode(s);
+  if (paint >= 0) dict.PAINT_COLOR = paint;
+
+  sendToWatch(dict);
 }
 
 // After a command, the car's reported state can lag the change by a few seconds
@@ -313,6 +350,7 @@ if (typeof module !== 'undefined' && module.exports) {
     handleCommand: handleCommand,
     ensureAwake: ensureAwake,
     awakeCode: awakeCode,
+    paintCode: paintCode,
     buildConfigHtml: buildConfigHtml
   };
 }
