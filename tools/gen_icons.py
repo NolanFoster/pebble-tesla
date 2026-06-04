@@ -200,11 +200,12 @@ def car(front):
     ]
     d.polygon([(s(x), s(y)) for x, y in body], fill=WHITE)
     # Raised lid: a thick angled panel hinged at the cabin, lifting at one end.
+    # Frunk lifts on the right, trunk on the left (reads more conventionally).
     lw = int(2.4 * SS)
-    if front:
-        d.line((s(8.5), s(13.5), s(4.0), s(7.0)), fill=WHITE, width=lw)
-    else:  # rear hatch
+    if front:  # frunk
         d.line((s(17.5), s(13.5), s(21.0), s(7.0)), fill=WHITE, width=lw)
+    else:  # rear hatch (trunk)
+        d.line((s(8.5), s(13.5), s(4.0), s(7.0)), fill=WHITE, width=lw)
     return finish(img)
 
 
