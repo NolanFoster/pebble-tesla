@@ -175,13 +175,15 @@ static void animate_battery_to(int to) {
 #define ACCENT_COLOR PBL_IF_COLOR_ELSE(GColorRoseVale, GColorWhite)
 
 #if defined(PBL_COLOR)
-// Battery arc: a natural clay -> ochre -> olive gradient rather than RGB.
+// Battery arc: vibrant red -> yellow -> green, the most saturated colors in the
+// Pebble palette so the charge level pops against the black ground and the dark
+// track.
 static GColor battery_arc_color(int battery) {
   switch (battery_level(battery)) {
-    case BATTERY_LOW:  return GColorRoseVale;      // clay-red
-    case BATTERY_MED:  return GColorChromeYellow;  // ochre / gold
-    case BATTERY_HIGH: return GColorArmyGreen;     // olive / forest
-    default:           return GColorWindsorTan;    // unknown — earthy neutral
+    case BATTERY_LOW:  return GColorRed;        // critical
+    case BATTERY_MED:  return GColorYellow;     // mid
+    case BATTERY_HIGH: return GColorGreen;      // healthy
+    default:           return GColorLightGray;  // unknown — neutral, still legible
   }
 }
 #endif
@@ -198,7 +200,7 @@ static void draw_battery_gauge(GContext *gctx, GRect box, const VehicleState *st
   const int32_t end = TRIG_MAX_ANGLE * pct / 100;
 
 #if defined(PBL_COLOR)
-  graphics_context_set_fill_color(gctx, GColorWindsorTan);                // track
+  graphics_context_set_fill_color(gctx, GColorDarkGray);                  // track
   graphics_fill_radial(gctx, box, GOvalScaleModeFitCircle, thick, 0, TRIG_MAX_ANGLE);
   graphics_context_set_fill_color(gctx, battery_arc_color(st->battery));  // charge
   graphics_fill_radial(gctx, box, GOvalScaleModeFitCircle, thick, 0, end);
