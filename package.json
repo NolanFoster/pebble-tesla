@@ -1,6 +1,6 @@
 {
   "name": "tesla-control",
-  "author": "you",
+  "author": "Nolan Foster <nolanfoster@gmail.com>",
   "version": "1.0.0",
   "keywords": ["pebble-app"],
   "private": true,
