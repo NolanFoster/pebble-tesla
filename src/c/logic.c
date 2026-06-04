@@ -22,6 +22,13 @@ void fmt_battery_pct(const VehicleState *s, char *out, size_t n) {
     snprintf(out, n, "—");
 }
 
+void fmt_battery_num(const VehicleState *s, char *out, size_t n) {
+  if (s->battery >= 0)
+    snprintf(out, n, "%d", s->battery);
+  else
+    snprintf(out, n, "—");
+}
+
 void fmt_range(const VehicleState *s, char *out, size_t n) {
   if (s->range >= 0)
     snprintf(out, n, "%d mi", s->range);

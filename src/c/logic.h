@@ -77,6 +77,10 @@ void fmt_power_subtitle(const VehicleState *s, char *out, size_t n);
 void fmt_battery_pct(const VehicleState *s, char *out, size_t n);  // "84%" or "—"
 void fmt_range(const VehicleState *s, char *out, size_t n);        // "240 mi" or ""
 
+// Battery percentage as bare digits, for the LECO numbers-only hero font (which
+// has no '%' glyph — the percent sign is drawn separately). "84" or "—".
+void fmt_battery_num(const VehicleState *s, char *out, size_t n);
+
 // Charge level bucket, used to color the battery gauge arc. Returned as an enum
 // (not a GColor) so this stays host-testable without <pebble.h>.
 typedef enum {
