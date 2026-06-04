@@ -40,21 +40,33 @@
       "AWAKE",
       "NAME",
       "ERROR",
-      "TEMP_DELTA"
+      "TEMP_DELTA",
+      "PAINT_COLOR"
     ],
     "resources": {
       "media": [
-        { "type": "bitmap", "name": "ICON_LOCKED",      "file": "images/locked.png" },
-        { "type": "bitmap", "name": "ICON_UNLOCKED",    "file": "images/unlocked.png" },
-        { "type": "bitmap", "name": "ICON_SETTINGS",    "file": "images/settings.png" },
-        { "type": "bitmap", "name": "ICON_CLIMATE_ON",  "file": "images/climate_on.png" },
-        { "type": "bitmap", "name": "ICON_CLIMATE_OFF", "file": "images/climate_off.png" },
-        { "type": "bitmap", "name": "ICON_TEMP_UP",     "file": "images/temp_up.png" },
-        { "type": "bitmap", "name": "ICON_TEMP_DOWN",   "file": "images/temp_down.png" },
-        { "type": "bitmap", "name": "ICON_FRUNK",       "file": "images/frunk.png" },
-        { "type": "bitmap", "name": "ICON_TRUNK",       "file": "images/trunk.png" },
-        { "type": "bitmap", "name": "ICON_CHARGE",      "file": "images/charge.png" },
-        { "type": "bitmap", "name": "ICON_REFRESH",     "file": "images/refresh.png" }
+        { "type": "bitmap", "name": "ICON_LOCKED",            "file": "images/locked.png" },
+        { "type": "bitmap", "name": "ICON_UNLOCKED",          "file": "images/unlocked.png" },
+        { "type": "bitmap", "name": "ICON_SETTINGS",          "file": "images/settings.png" },
+        { "type": "bitmap", "name": "ICON_CLIMATE_ON",        "file": "images/climate_on.png" },
+        { "type": "bitmap", "name": "ICON_CLIMATE_OFF",       "file": "images/climate_off.png" },
+        { "type": "bitmap", "name": "ICON_TEMP_UP",           "file": "images/temp_up.png" },
+        { "type": "bitmap", "name": "ICON_TEMP_DOWN",         "file": "images/temp_down.png" },
+        { "type": "bitmap", "name": "ICON_FRUNK",             "file": "images/frunk.png" },
+        { "type": "bitmap", "name": "ICON_TRUNK",             "file": "images/trunk.png" },
+        { "type": "bitmap", "name": "ICON_CHARGE",            "file": "images/charge.png" },
+        { "type": "bitmap", "name": "ICON_REFRESH",           "file": "images/refresh.png" },
+        { "type": "bitmap", "name": "ICON_LOCKED_DARK",       "file": "images/locked_black.png" },
+        { "type": "bitmap", "name": "ICON_UNLOCKED_DARK",     "file": "images/unlocked_black.png" },
+        { "type": "bitmap", "name": "ICON_SETTINGS_DARK",     "file": "images/settings_black.png" },
+        { "type": "bitmap", "name": "ICON_CLIMATE_ON_DARK",   "file": "images/climate_on_black.png" },
+        { "type": "bitmap", "name": "ICON_CLIMATE_OFF_DARK",  "file": "images/climate_off_black.png" },
+        { "type": "bitmap", "name": "ICON_TEMP_UP_DARK",      "file": "images/temp_up_black.png" },
+        { "type": "bitmap", "name": "ICON_TEMP_DOWN_DARK",    "file": "images/temp_down_black.png" },
+        { "type": "bitmap", "name": "ICON_FRUNK_DARK",        "file": "images/frunk_black.png" },
+        { "type": "bitmap", "name": "ICON_TRUNK_DARK",        "file": "images/trunk_black.png" },
+        { "type": "bitmap", "name": "ICON_CHARGE_DARK",       "file": "images/charge_black.png" },
+        { "type": "bitmap", "name": "ICON_REFRESH_DARK",      "file": "images/refresh_black.png" }
       ]
     }
   }

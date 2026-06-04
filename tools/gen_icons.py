@@ -58,6 +58,29 @@ def save(img, name):
     img.save(os.path.join(OUT_DIR, name))
 
 
+def darken(img):
+    """Recolor a white-on-transparent glyph to black, preserving its alpha.
+
+    The watchapp themes the action bar / menu highlight to the car's paint
+    color; on light themes (white / silver cars) the default white glyphs would
+    vanish, so a black-glyph copy of every icon is emitted alongside the white
+    one and selected at runtime by luminance (see s_dark_fg in main.c)."""
+    img = img.copy()
+    px = img.load()
+    w, h = img.size
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            px[x, y] = (0, 0, 0, a)
+    return img
+
+
+def save_both(img, stem):
+    """Save the white glyph as <stem>.png and its black variant as <stem>_black.png."""
+    save(img, stem + ".png")
+    save(darken(img), stem + "_black.png")
+
+
 def padlock(locked):
     """Padlock: body + shackle. Shackle lifts/detaches on one side when unlocked.
 
@@ -193,18 +216,20 @@ def refresh():
 
 
 def main():
-    save(padlock(locked=True), "locked.png")
-    save(padlock(locked=False), "unlocked.png")
-    save(gear(), "settings.png")
-    save(fan(on=True), "climate_on.png")
-    save(fan(on=False), "climate_off.png")
-    save(thermometer(up=True), "temp_up.png")
-    save(thermometer(up=False), "temp_down.png")
-    save(car(front=True), "frunk.png")
-    save(car(front=False), "trunk.png")
-    save(bolt(), "charge.png")
-    save(refresh(), "refresh.png")
-    print("Wrote 11 icons to", os.path.normpath(OUT_DIR))
+    # Each icon is emitted in both polarities (white + *_black) so the UI can
+    # keep contrast against any car-color theme.
+    save_both(padlock(locked=True), "locked")
+    save_both(padlock(locked=False), "unlocked")
+    save_both(gear(), "settings")
+    save_both(fan(on=True), "climate_on")
+    save_both(fan(on=False), "climate_off")
+    save_both(thermometer(up=True), "temp_up")
+    save_both(thermometer(up=False), "temp_down")
+    save_both(car(front=True), "frunk")
+    save_both(car(front=False), "trunk")
+    save_both(bolt(), "charge")
+    save_both(refresh(), "refresh")
+    print("Wrote 22 icons (11 white + 11 black) to", os.path.normpath(OUT_DIR))
 
 
 if __name__ == "__main__":

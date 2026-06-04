@@ -15,6 +15,7 @@
 #define KEY_NAME         MESSAGE_KEY_NAME
 #define KEY_ERROR        MESSAGE_KEY_ERROR
 #define KEY_TEMP_DELTA   MESSAGE_KEY_TEMP_DELTA
+#define KEY_PAINT_COLOR  MESSAGE_KEY_PAINT_COLOR
 
 // ---- Command codes (TeslaCommand enum) come from logic.h ----
 
@@ -29,6 +30,8 @@ static bool     s_online      = false;
 static int      s_awake       = AWAKE_UNKNOWN;
 static char     s_name[100]   = "";   // vehicle name (UTF-8; room for ~24 emoji)
 static char     s_error[64]   = "";
+static int      s_paint       = PAINT_UNKNOWN;  // exterior paint -> accent theme
+static bool     s_dark_fg     = false;          // accent is light -> draw fg in black
 
 // ---- UI ----
 static Window         *s_main_window;
@@ -36,8 +39,16 @@ static Layer          *s_card_layer;     // custom-drawn status "card" (left of 
 static ActionBarLayer *s_action_bar;     // lock (up) / settings (select) / climate (down)
 static GBitmap        *s_icon_locked, *s_icon_unlocked, *s_icon_settings;
 static GBitmap        *s_icon_climate_on, *s_icon_climate_off;
+// Dark (black-glyph) variants of the action-bar icons, used on light accents
+// (e.g. a white- or silver-car theme) so the glyphs stay visible.
+static GBitmap        *s_icon_locked_d, *s_icon_unlocked_d, *s_icon_settings_d;
+static GBitmap        *s_icon_climate_on_d, *s_icon_climate_off_d;
+// "More Controls" menu glyphs, plus black-glyph variants for the highlighted
+// row when the car theme makes that row's background light.
 static GBitmap        *s_icon_temp_up, *s_icon_temp_down, *s_icon_frunk;
 static GBitmap        *s_icon_trunk, *s_icon_charge, *s_icon_refresh;
+static GBitmap        *s_icon_temp_up_d, *s_icon_temp_down_d, *s_icon_frunk_d;
+static GBitmap        *s_icon_trunk_d, *s_icon_charge_d, *s_icon_refresh_d;
 
 static Window      *s_controls_window;   // "More Controls" sub-window (select button)
 static MenuLayer   *s_controls_menu;
@@ -57,6 +68,7 @@ static int          s_anim_to   = 0;
 static void send_command(TeslaCommand cmd, int arg);
 static void update_action_bar_icons(void);
 static void push_controls_window(void);
+static void apply_theme(void);
 
 // ---------------------------------------------------------------------------
 // Transient status overlay
@@ -400,18 +412,64 @@ static void action_bar_click_config(void *ctx) {
   window_single_click_subscribe(BUTTON_ID_DOWN,   ab_down_click);
 }
 
-// Refresh the up/down glyphs to mirror the current lock/climate state.
+// Refresh the up/down glyphs to mirror the current lock/climate state. On a
+// light accent (s_dark_fg) the black-glyph variants are used so the icons keep
+// contrast against the action bar.
 static void update_action_bar_icons(void) {
   if (!s_action_bar) return;
   VehicleState st = current_state();
-  GBitmap *up = (lock_toggle_icon(&st) == ICON_KIND_LOCKED) ? s_icon_locked
-                                                            : s_icon_unlocked;
-  GBitmap *down = (climate_toggle_icon(&st) == ICON_KIND_CLIMATE_ON) ? s_icon_climate_on
-                                                                     : s_icon_climate_off;
+  bool dark = PBL_IF_COLOR_ELSE(s_dark_fg, false);
+  GBitmap *i_locked     = dark ? s_icon_locked_d     : s_icon_locked;
+  GBitmap *i_unlocked   = dark ? s_icon_unlocked_d   : s_icon_unlocked;
+  GBitmap *i_settings   = dark ? s_icon_settings_d   : s_icon_settings;
+  GBitmap *i_climate_on = dark ? s_icon_climate_on_d : s_icon_climate_on;
+  GBitmap *i_climate_off= dark ? s_icon_climate_off_d: s_icon_climate_off;
+  GBitmap *up = (lock_toggle_icon(&st) == ICON_KIND_LOCKED) ? i_locked
+                                                            : i_unlocked;
+  GBitmap *down = (climate_toggle_icon(&st) == ICON_KIND_CLIMATE_ON) ? i_climate_on
+                                                                     : i_climate_off;
   action_bar_layer_set_icon(s_action_bar, BUTTON_ID_UP, up);
-  action_bar_layer_set_icon(s_action_bar, BUTTON_ID_SELECT, s_icon_settings);
+  action_bar_layer_set_icon(s_action_bar, BUTTON_ID_SELECT, i_settings);
   action_bar_layer_set_icon(s_action_bar, BUTTON_ID_DOWN, down);
 }
+
+// ---------------------------------------------------------------------------
+// Car-color theme: map the reported paint onto an accent color plus a
+// contrast-safe foreground. The accent is used as a *background* (action bar,
+// menu highlight) behind icons/text, so light accents (white, silver) pair with
+// a black foreground and dark accents with white — keeping everything legible.
+// ---------------------------------------------------------------------------
+#if defined(PBL_COLOR)
+typedef struct { GColor accent; bool dark_fg; } Theme;
+
+static Theme theme_for_paint(int paint) {
+  switch (paint) {
+    case PAINT_WHITE:  return (Theme){ GColorWhite,     true  };
+    case PAINT_BLACK:  return (Theme){ GColorBlack,     false };
+    case PAINT_SILVER: return (Theme){ GColorLightGray, true  };
+    case PAINT_GREY:   return (Theme){ GColorDarkGray,  false };
+    case PAINT_BLUE:   return (Theme){ GColorDukeBlue,  false };
+    case PAINT_RED:    // brand red is the Usonian Cherokee-Red signature
+    default:           return (Theme){ ACCENT_COLOR,    false }; // unknown -> brand accent
+  }
+}
+
+static GColor theme_fg(const Theme *t) {
+  return t->dark_fg ? GColorBlack : GColorWhite;
+}
+
+static void apply_theme(void) {
+  Theme th = theme_for_paint(s_paint);
+  s_dark_fg = th.dark_fg;
+  if (s_action_bar) action_bar_layer_set_background_color(s_action_bar, th.accent);
+  update_action_bar_icons();  // picks the glyph polarity that matches s_dark_fg
+  if (s_controls_menu)
+    menu_layer_set_highlight_colors(s_controls_menu, th.accent, theme_fg(&th));
+}
+#else
+// Monochrome platforms keep their fixed black/white scheme.
+static void apply_theme(void) { update_action_bar_icons(); }
+#endif
 
 // ---------------------------------------------------------------------------
 // "More Controls" sub-window (opened from the SELECT button)
@@ -446,15 +504,26 @@ static void mc_draw_header(GContext *gctx, const Layer *cell, uint16_t section, 
 }
 
 static void mc_draw_row(GContext *gctx, const Layer *cell, MenuIndex *idx, void *ctx) {
+  // The highlighted row paints over the car-color accent. On a light accent
+  // (s_dark_fg) its white glyph would vanish, so use the black variant for just
+  // that row; non-highlighted rows keep white glyphs on the dark menu. The
+  // title text already follows the menu's highlight foreground.
+  bool dark = false;
+#if defined(PBL_COLOR)
+  if (s_dark_fg) {
+    MenuIndex sel = menu_layer_get_selected_index(s_controls_menu);
+    dark = (sel.section == idx->section && sel.row == idx->row);
+  }
+#endif
   const char *title = "";
   GBitmap *icon = NULL;
   switch (idx->row) {
-    case MC_TEMP_UP:     title = "Temp +1°";    icon = s_icon_temp_up;   break;
-    case MC_TEMP_DOWN:   title = "Temp -1°";    icon = s_icon_temp_down; break;
-    case MC_FRUNK:       title = "Open Frunk";  icon = s_icon_frunk;     break;
-    case MC_TRUNK:       title = "Open Trunk";  icon = s_icon_trunk;     break;
-    case MC_CHARGE_PORT: title = "Charge Port"; icon = s_icon_charge;    break;
-    case MC_REFRESH:     title = "Refresh";     icon = s_icon_refresh;   break;
+    case MC_TEMP_UP:     title = "Temp +1°";    icon = dark ? s_icon_temp_up_d   : s_icon_temp_up;   break;
+    case MC_TEMP_DOWN:   title = "Temp -1°";    icon = dark ? s_icon_temp_down_d : s_icon_temp_down; break;
+    case MC_FRUNK:       title = "Open Frunk";  icon = dark ? s_icon_frunk_d     : s_icon_frunk;     break;
+    case MC_TRUNK:       title = "Open Trunk";  icon = dark ? s_icon_trunk_d     : s_icon_trunk;     break;
+    case MC_CHARGE_PORT: title = "Charge Port"; icon = dark ? s_icon_charge_d    : s_icon_charge;    break;
+    case MC_REFRESH:     title = "Refresh";     icon = dark ? s_icon_refresh_d   : s_icon_refresh;   break;
   }
   menu_cell_basic_draw(gctx, cell, title, NULL, icon);
 }
@@ -504,7 +573,10 @@ static void controls_window_load(Window *w) {
   // matches the card. The accent highlight is the Cherokee-Red signature.
   menu_layer_set_normal_colors(s_controls_menu, GColorBlack, GColorWhite);
 #if defined(PBL_COLOR)
-  menu_layer_set_highlight_colors(s_controls_menu, GColorRoseVale, GColorWhite);
+  // Highlight follows the car-color theme; the row icons flip polarity to match
+  // (see mc_draw_row) so they stay visible on light accents.
+  Theme th = theme_for_paint(s_paint);
+  menu_layer_set_highlight_colors(s_controls_menu, th.accent, theme_fg(&th));
 #else
   menu_layer_set_highlight_colors(s_controls_menu, GColorWhite, GColorBlack);
 #endif
@@ -577,6 +649,11 @@ static void inbox_received(DictionaryIterator *it, void *ctx) {
     s_name[sizeof(s_name) - 1] = '\0';
     got_state = true;
   }
+  if ((t = dict_find(it, KEY_PAINT_COLOR))) {
+    int paint = t->value->int32;
+    if (paint != s_paint) { s_paint = paint; apply_theme(); }
+    got_state = true;
+  }
 
   if (got_state) {
     if (s_card_layer) layer_mark_dirty(s_card_layer);
@@ -611,12 +688,23 @@ static void load_icons(void) {
   s_icon_settings    = gbitmap_create_with_resource(RESOURCE_ID_ICON_SETTINGS);
   s_icon_climate_on  = gbitmap_create_with_resource(RESOURCE_ID_ICON_CLIMATE_ON);
   s_icon_climate_off = gbitmap_create_with_resource(RESOURCE_ID_ICON_CLIMATE_OFF);
+  s_icon_locked_d      = gbitmap_create_with_resource(RESOURCE_ID_ICON_LOCKED_DARK);
+  s_icon_unlocked_d    = gbitmap_create_with_resource(RESOURCE_ID_ICON_UNLOCKED_DARK);
+  s_icon_settings_d    = gbitmap_create_with_resource(RESOURCE_ID_ICON_SETTINGS_DARK);
+  s_icon_climate_on_d  = gbitmap_create_with_resource(RESOURCE_ID_ICON_CLIMATE_ON_DARK);
+  s_icon_climate_off_d = gbitmap_create_with_resource(RESOURCE_ID_ICON_CLIMATE_OFF_DARK);
   s_icon_temp_up     = gbitmap_create_with_resource(RESOURCE_ID_ICON_TEMP_UP);
   s_icon_temp_down   = gbitmap_create_with_resource(RESOURCE_ID_ICON_TEMP_DOWN);
   s_icon_frunk       = gbitmap_create_with_resource(RESOURCE_ID_ICON_FRUNK);
   s_icon_trunk       = gbitmap_create_with_resource(RESOURCE_ID_ICON_TRUNK);
   s_icon_charge      = gbitmap_create_with_resource(RESOURCE_ID_ICON_CHARGE);
   s_icon_refresh     = gbitmap_create_with_resource(RESOURCE_ID_ICON_REFRESH);
+  s_icon_temp_up_d   = gbitmap_create_with_resource(RESOURCE_ID_ICON_TEMP_UP_DARK);
+  s_icon_temp_down_d = gbitmap_create_with_resource(RESOURCE_ID_ICON_TEMP_DOWN_DARK);
+  s_icon_frunk_d     = gbitmap_create_with_resource(RESOURCE_ID_ICON_FRUNK_DARK);
+  s_icon_trunk_d     = gbitmap_create_with_resource(RESOURCE_ID_ICON_TRUNK_DARK);
+  s_icon_charge_d    = gbitmap_create_with_resource(RESOURCE_ID_ICON_CHARGE_DARK);
+  s_icon_refresh_d   = gbitmap_create_with_resource(RESOURCE_ID_ICON_REFRESH_DARK);
 }
 
 static void unload_icons(void) {
@@ -625,12 +713,23 @@ static void unload_icons(void) {
   gbitmap_destroy(s_icon_settings);    s_icon_settings = NULL;
   gbitmap_destroy(s_icon_climate_on);  s_icon_climate_on = NULL;
   gbitmap_destroy(s_icon_climate_off); s_icon_climate_off = NULL;
+  gbitmap_destroy(s_icon_locked_d);      s_icon_locked_d = NULL;
+  gbitmap_destroy(s_icon_unlocked_d);    s_icon_unlocked_d = NULL;
+  gbitmap_destroy(s_icon_settings_d);    s_icon_settings_d = NULL;
+  gbitmap_destroy(s_icon_climate_on_d);  s_icon_climate_on_d = NULL;
+  gbitmap_destroy(s_icon_climate_off_d); s_icon_climate_off_d = NULL;
   gbitmap_destroy(s_icon_temp_up);     s_icon_temp_up = NULL;
   gbitmap_destroy(s_icon_temp_down);   s_icon_temp_down = NULL;
   gbitmap_destroy(s_icon_frunk);       s_icon_frunk = NULL;
   gbitmap_destroy(s_icon_trunk);       s_icon_trunk = NULL;
   gbitmap_destroy(s_icon_charge);      s_icon_charge = NULL;
   gbitmap_destroy(s_icon_refresh);     s_icon_refresh = NULL;
+  gbitmap_destroy(s_icon_temp_up_d);   s_icon_temp_up_d = NULL;
+  gbitmap_destroy(s_icon_temp_down_d); s_icon_temp_down_d = NULL;
+  gbitmap_destroy(s_icon_frunk_d);     s_icon_frunk_d = NULL;
+  gbitmap_destroy(s_icon_trunk_d);     s_icon_trunk_d = NULL;
+  gbitmap_destroy(s_icon_charge_d);    s_icon_charge_d = NULL;
+  gbitmap_destroy(s_icon_refresh_d);   s_icon_refresh_d = NULL;
 }
 
 static void main_window_load(Window *w) {
@@ -650,11 +749,8 @@ static void main_window_load(Window *w) {
 
   s_action_bar = action_bar_layer_create();
   action_bar_layer_set_click_config_provider(s_action_bar, action_bar_click_config);
-#if defined(PBL_COLOR)
-  action_bar_layer_set_background_color(s_action_bar, ACCENT_COLOR);
-#endif
   action_bar_layer_add_to_window(s_action_bar, w);
-  update_action_bar_icons();
+  apply_theme();  // accent bg + icon polarity for the current paint (defaults to ACCENT_COLOR)
 }
 
 static void main_window_unload(Window *w) {

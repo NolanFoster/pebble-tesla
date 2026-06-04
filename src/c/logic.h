@@ -35,6 +35,22 @@ typedef enum {
   AWAKE_WAITING = 2,  // waiting_for_sleep
 } AwakeStatus;
 
+// Exterior paint color, used to theme the app's accent (action bar + menu
+// highlight) so the UI matches the car. Sent phone->watch as the PAINT_COLOR
+// message key (int). The phone maps Tessie's vehicle_config.exterior_color /
+// option_codes onto these values (see paintCode() in index.js); the watch maps
+// each value onto an accent GColor plus a contrast-safe foreground (see
+// theme_for_paint() in main.c). Keep the two in sync.
+typedef enum {
+  PAINT_UNKNOWN = -1,  // not reported -> watch keeps the default brand-red accent
+  PAINT_RED     = 0,   // Red Multi-Coat / Ultra Red / Midnight Cherry Red
+  PAINT_WHITE   = 1,   // Pearl White Multi-Coat
+  PAINT_BLACK   = 2,   // Solid Black / Obsidian Black
+  PAINT_SILVER  = 3,   // Silver Metallic / Quicksilver / Titanium (light)
+  PAINT_GREY    = 4,   // Midnight Silver / Stealth Grey (dark)
+  PAINT_BLUE    = 5,   // Deep Blue Metallic
+} PaintColor;
+
 // Snapshot of vehicle state used purely for rendering decisions.
 typedef struct {
   int  battery;       // percent, or <0 when unknown
