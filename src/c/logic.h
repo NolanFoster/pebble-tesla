@@ -23,6 +23,7 @@ typedef enum {
   CMD_FRUNK        = 7,
   CMD_TRUNK        = 8,
   CMD_CHARGE_PORT  = 9,
+  CMD_WAKE         = 10,
 } TeslaCommand;
 
 // Vehicle power status from Tessie GET /{vin}/status. Commands can only be sent
@@ -65,6 +66,26 @@ typedef struct {
 
 // Does this command carry a TEMP_DELTA argument in the outbox dict?
 bool cmd_has_temp_delta(int cmd);
+
+// "More Controls" menu rows. The Wake row is only present when the vehicle is
+// asleep, so the visible row set is computed at render time from the state.
+typedef enum {
+  CTRL_ROW_WAKE = 0,
+  CTRL_ROW_TEMP_UP,
+  CTRL_ROW_TEMP_DOWN,
+  CTRL_ROW_FRUNK,
+  CTRL_ROW_TRUNK,
+  CTRL_ROW_CHARGE_PORT,
+  CTRL_ROW_REFRESH,
+} ControlsRow;
+#define CONTROLS_MAX_ROWS 7
+
+// Fills `rows` with the visible rows for the current state and returns the
+// count (<= max). CTRL_ROW_WAKE is included first only when the car is asleep.
+int         controls_menu_rows(const VehicleState *s, ControlsRow *rows, int max);
+const char *controls_row_label(ControlsRow row);     // "Wake", "Temp +1°", …
+int         controls_row_cmd(ControlsRow row);        // CMD_WAKE, CMD_TEMP_UP, …
+int         controls_row_temp_delta(ControlsRow row); // +1 / -1 / 0
 
 // Status-row subtitles. Each writes a NUL-terminated string into `out` (size n).
 void fmt_battery_subtitle(const VehicleState *s, char *out, size_t n);

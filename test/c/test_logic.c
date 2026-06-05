@@ -151,6 +151,48 @@ void test_power_subtitle(void) {
   TEST_ASSERT_EQUAL_STRING("Waiting for sleep", buf);
 }
 
+void test_controls_menu_rows_hides_wake_when_awake(void) {
+  ControlsRow rows[CONTROLS_MAX_ROWS];
+  VehicleState s = base();  // awake
+  int n = controls_menu_rows(&s, rows, CONTROLS_MAX_ROWS);
+  TEST_ASSERT_EQUAL_INT(6, n);
+  TEST_ASSERT_EQUAL_INT(CTRL_ROW_TEMP_UP, rows[0]);   // no Wake row
+  TEST_ASSERT_EQUAL_INT(CTRL_ROW_REFRESH, rows[5]);
+
+  // Same for unknown / waiting-for-sleep: Wake only shows when asleep.
+  s.awake = AWAKE_UNKNOWN;
+  TEST_ASSERT_EQUAL_INT(6, controls_menu_rows(&s, rows, CONTROLS_MAX_ROWS));
+  TEST_ASSERT_EQUAL_INT(CTRL_ROW_TEMP_UP, rows[0]);
+  s.awake = AWAKE_WAITING;
+  TEST_ASSERT_EQUAL_INT(6, controls_menu_rows(&s, rows, CONTROLS_MAX_ROWS));
+}
+
+void test_controls_menu_rows_shows_wake_when_asleep(void) {
+  ControlsRow rows[CONTROLS_MAX_ROWS];
+  VehicleState s = base();
+  s.awake = AWAKE_ASLEEP;
+  int n = controls_menu_rows(&s, rows, CONTROLS_MAX_ROWS);
+  TEST_ASSERT_EQUAL_INT(7, n);
+  TEST_ASSERT_EQUAL_INT(CTRL_ROW_WAKE, rows[0]);      // Wake is first
+  TEST_ASSERT_EQUAL_INT(CTRL_ROW_TEMP_UP, rows[1]);
+  TEST_ASSERT_EQUAL_INT(CTRL_ROW_REFRESH, rows[6]);
+}
+
+void test_controls_row_label_cmd_delta(void) {
+  TEST_ASSERT_EQUAL_STRING("Wake", controls_row_label(CTRL_ROW_WAKE));
+  TEST_ASSERT_EQUAL_STRING("Temp +1°", controls_row_label(CTRL_ROW_TEMP_UP));
+  TEST_ASSERT_EQUAL_STRING("Charge Port", controls_row_label(CTRL_ROW_CHARGE_PORT));
+
+  TEST_ASSERT_EQUAL_INT(CMD_WAKE, controls_row_cmd(CTRL_ROW_WAKE));
+  TEST_ASSERT_EQUAL_INT(CMD_TEMP_DOWN, controls_row_cmd(CTRL_ROW_TEMP_DOWN));
+  TEST_ASSERT_EQUAL_INT(CMD_REFRESH, controls_row_cmd(CTRL_ROW_REFRESH));
+
+  TEST_ASSERT_EQUAL_INT(1,  controls_row_temp_delta(CTRL_ROW_TEMP_UP));
+  TEST_ASSERT_EQUAL_INT(-1, controls_row_temp_delta(CTRL_ROW_TEMP_DOWN));
+  TEST_ASSERT_EQUAL_INT(0,  controls_row_temp_delta(CTRL_ROW_WAKE));
+  TEST_ASSERT_EQUAL_INT(0,  controls_row_temp_delta(CTRL_ROW_FRUNK));
+}
+
 void test_status_header_text(void) {
   TEST_ASSERT_EQUAL_STRING("Status", status_header_text(NULL));
   TEST_ASSERT_EQUAL_STRING("Status", status_header_text(""));
@@ -177,6 +219,9 @@ int main(void) {
   RUN_TEST(test_toggle_icons);
   RUN_TEST(test_awake_label);
   RUN_TEST(test_power_subtitle);
+  RUN_TEST(test_controls_menu_rows_hides_wake_when_awake);
+  RUN_TEST(test_controls_menu_rows_shows_wake_when_asleep);
+  RUN_TEST(test_controls_row_label_cmd_delta);
   RUN_TEST(test_status_header_text);
   RUN_TEST(test_small_buffer_is_null_terminated);
   return UNITY_END();

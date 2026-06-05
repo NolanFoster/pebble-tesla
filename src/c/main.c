@@ -476,18 +476,17 @@ static void apply_theme(void) { update_action_bar_icons(); }
 // ---------------------------------------------------------------------------
 // "More Controls" sub-window (opened from the SELECT button)
 // ---------------------------------------------------------------------------
-enum {
-  MC_TEMP_UP = 0,
-  MC_TEMP_DOWN,
-  MC_FRUNK,
-  MC_TRUNK,
-  MC_CHARGE_PORT,
-  MC_REFRESH,
-  MC_COUNT
-};
+// The visible rows depend on state — the Wake row only appears when the car is
+// asleep — so rebuild the list whenever a callback needs it. The menu reloads
+// on every state update (see inbox_received), so Wake appears/disappears live.
+static int mc_rows(ControlsRow *rows) {
+  VehicleState st = current_state();
+  return controls_menu_rows(&st, rows, CONTROLS_MAX_ROWS);
+}
 
 static uint16_t mc_num_rows(MenuLayer *ml, uint16_t section, void *ctx) {
-  return MC_COUNT;
+  ControlsRow rows[CONTROLS_MAX_ROWS];
+  return (uint16_t)mc_rows(rows);
 }
 
 static int16_t mc_header_height(MenuLayer *ml, uint16_t section, void *ctx) {
@@ -505,6 +504,21 @@ static void mc_draw_header(GContext *gctx, const Layer *cell, uint16_t section, 
 #endif
 }
 
+// Per-row glyph (black variant when `dark`, to stay legible on a light accent).
+// The Wake row has no dedicated glyph, so it draws icon-less.
+static GBitmap *mc_icon(ControlsRow row, bool dark) {
+  switch (row) {
+    case CTRL_ROW_WAKE:        return NULL;
+    case CTRL_ROW_TEMP_UP:     return dark ? s_icon_temp_up_d   : s_icon_temp_up;
+    case CTRL_ROW_TEMP_DOWN:   return dark ? s_icon_temp_down_d : s_icon_temp_down;
+    case CTRL_ROW_FRUNK:       return dark ? s_icon_frunk_d     : s_icon_frunk;
+    case CTRL_ROW_TRUNK:       return dark ? s_icon_trunk_d     : s_icon_trunk;
+    case CTRL_ROW_CHARGE_PORT: return dark ? s_icon_charge_d    : s_icon_charge;
+    case CTRL_ROW_REFRESH:     return dark ? s_icon_refresh_d   : s_icon_refresh;
+  }
+  return NULL;
+}
+
 static void mc_draw_row(GContext *gctx, const Layer *cell, MenuIndex *idx, void *ctx) {
   // The highlighted row paints over the car-color accent. On a light accent
   // (s_dark_fg) its white glyph would vanish, so use the black variant for just
@@ -517,46 +531,35 @@ static void mc_draw_row(GContext *gctx, const Layer *cell, MenuIndex *idx, void 
     dark = (sel.section == idx->section && sel.row == idx->row);
   }
 #endif
-  const char *title = "";
-  GBitmap *icon = NULL;
-  switch (idx->row) {
-    case MC_TEMP_UP:     title = "Temp +1°";    icon = dark ? s_icon_temp_up_d   : s_icon_temp_up;   break;
-    case MC_TEMP_DOWN:   title = "Temp -1°";    icon = dark ? s_icon_temp_down_d : s_icon_temp_down; break;
-    case MC_FRUNK:       title = "Open Frunk";  icon = dark ? s_icon_frunk_d     : s_icon_frunk;     break;
-    case MC_TRUNK:       title = "Open Trunk";  icon = dark ? s_icon_trunk_d     : s_icon_trunk;     break;
-    case MC_CHARGE_PORT: title = "Charge Port"; icon = dark ? s_icon_charge_d    : s_icon_charge;    break;
-    case MC_REFRESH:     title = "Refresh";     icon = dark ? s_icon_refresh_d   : s_icon_refresh;   break;
+  ControlsRow rows[CONTROLS_MAX_ROWS];
+  int n = mc_rows(rows);
+  if (idx->row >= n) { menu_cell_basic_draw(gctx, cell, "", NULL, NULL); return; }
+  ControlsRow row = rows[idx->row];
+  menu_cell_basic_draw(gctx, cell, controls_row_label(row), NULL, mc_icon(row, dark));
+}
+
+// Transient "…ing" overlay shown after a row is selected.
+static const char *mc_status(ControlsRow row) {
+  switch (row) {
+    case CTRL_ROW_WAKE:        return "Waking…";
+    case CTRL_ROW_TEMP_UP:     return "Temp +1°…";
+    case CTRL_ROW_TEMP_DOWN:   return "Temp -1°…";
+    case CTRL_ROW_FRUNK:       return "Opening frunk…";
+    case CTRL_ROW_TRUNK:       return "Opening trunk…";
+    case CTRL_ROW_CHARGE_PORT: return "Charge port…";
+    case CTRL_ROW_REFRESH:     return "Refreshing…";
   }
-  menu_cell_basic_draw(gctx, cell, title, NULL, icon);
+  return "…";
 }
 
 static void mc_select(MenuLayer *ml, MenuIndex *idx, void *ctx) {
-  switch (idx->row) {
-    case MC_TEMP_UP:
-      send_command(CMD_TEMP_UP, 1);
-      show_status("Temp +1°…", 0);
-      break;
-    case MC_TEMP_DOWN:
-      send_command(CMD_TEMP_DOWN, -1);
-      show_status("Temp -1°…", 0);
-      break;
-    case MC_FRUNK:
-      send_command(CMD_FRUNK, 0);
-      show_status("Opening frunk…", 0);
-      break;
-    case MC_TRUNK:
-      send_command(CMD_TRUNK, 0);
-      show_status("Opening trunk…", 0);
-      break;
-    case MC_CHARGE_PORT:
-      send_command(CMD_CHARGE_PORT, 0);
-      show_status("Charge port…", 0);
-      break;
-    case MC_REFRESH:
-      send_command(CMD_REFRESH, 0);
-      show_status("Refreshing…", 0);
-      break;
-  }
+  ControlsRow rows[CONTROLS_MAX_ROWS];
+  int n = mc_rows(rows);
+  if (idx->row >= n) return;
+  ControlsRow row = rows[idx->row];
+  // send_command attaches TEMP_DELTA only for temp rows; a 0 delta is ignored.
+  send_command((TeslaCommand)controls_row_cmd(row), controls_row_temp_delta(row));
+  show_status(mc_status(row), 0);
 }
 
 static void controls_window_load(Window *w) {

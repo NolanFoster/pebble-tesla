@@ -11,7 +11,8 @@ var CMD = {
   REFRESH: 0, LOCK: 1, UNLOCK: 2,
   CLIMATE_ON: 3, CLIMATE_OFF: 4,
   TEMP_UP: 5, TEMP_DOWN: 6,
-  FRUNK: 7, TRUNK: 8, CHARGE_PORT: 9
+  FRUNK: 7, TRUNK: 8, CHARGE_PORT: 9,
+  WAKE: 10
 };
 
 var API_BASE = 'https://api.tessie.com';
@@ -232,8 +233,8 @@ function setTemperature(deltaC) {
   var next = Math.max(15, Math.min(28, base + deltaC));
   localStorage.setItem('last_target', String(next));
   ensureAwake(function () {
-    // Tessie Set Temperature expects Celsius via ?temperature=
-    tessie('POST', '/command/set_temperature?temperature=' + next, function (err, data) {
+    // Tessie Set Temperatures expects Celsius via ?temperature=
+    tessie('POST', '/command/set_temperatures?temperature=' + next, function (err, data) {
       if (err) { sendError(err); return; }
       sendToWatch({ STATUS: 'Set ' + next + '°C' });
       setTimeout(function () {
@@ -246,9 +247,23 @@ function setTemperature(deltaC) {
   });
 }
 
+// Explicit user-initiated wake (the "Wake" controls row). Unlike ensureAwake,
+// this is the whole action: POST /wake, then refresh so the watch reflects the
+// new power state (and the Wake row drops off the controls menu).
+function wakeVehicle() {
+  sendToWatch({ STATUS: 'Waking…' });
+  tessie('POST', '/wake', function (err, wd) {
+    if (err) { sendError(err); return; }
+    if (wd && wd.result === false) { sendError('Wake timed out'); return; }
+    sendToWatch({ STATUS: 'Awake' });
+    refreshState();
+  }, 95000);
+}
+
 function handleCommand(code) {
   switch (code) {
     case CMD.REFRESH:     refreshState(); break;
+    case CMD.WAKE:        wakeVehicle(); break;
     case CMD.LOCK:        doCommand('/command/lock', 'Locked', isLocked); break;
     case CMD.UNLOCK:      doCommand('/command/unlock', 'Unlocked', function (s) { return !isLocked(s); }); break;
     case CMD.CLIMATE_ON:  doCommand('/command/start_climate', 'Climate on', isClimateOn); break;
