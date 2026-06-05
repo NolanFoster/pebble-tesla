@@ -346,6 +346,17 @@ describe('setTemperature', function () {
     expect(global.Pebble.sendAppMessage).toHaveBeenCalledWith(
       { STATUS: 'Set 22°C' }, expect.any(Function), expect.any(Function));
   });
+
+  test('confirms in °F when the user prefers Fahrenheit', function () {
+    var m = load(Object.assign({ last_target: '21', use_f: '1' }, CONFIGURED));
+    m.setTemperature(+1);
+    ackStatus('awake');
+    var xhr = global.XMLHttpRequest.last();
+    expect(xhr.url).toContain('/command/set_temperatures?temperature=22'); // still sent in °C
+    xhr.respond(200, {});
+    expect(global.Pebble.sendAppMessage).toHaveBeenCalledWith(
+      { STATUS: 'Set 72°F' }, expect.any(Function), expect.any(Function)); // 22°C -> 72°F
+  });
 });
 
 describe('doCommand', function () {

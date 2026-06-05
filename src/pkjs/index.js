@@ -236,7 +236,9 @@ function setTemperature(deltaC) {
     // Tessie Set Temperatures expects Celsius via ?temperature=
     tessie('POST', '/command/set_temperatures?temperature=' + next, function (err, data) {
       if (err) { sendError(err); return; }
-      sendToWatch({ STATUS: 'Set ' + next + '°C' });
+      // Confirm in the user's preferred unit (the target is tracked in °C).
+      var shown = cfg.useFahrenheit ? Math.round(next * 9 / 5 + 32) : next;
+      sendToWatch({ STATUS: 'Set ' + shown + (cfg.useFahrenheit ? '°F' : '°C') });
       setTimeout(function () {
         refreshAfterCommand(function (s) {
           return s.climate_state &&
