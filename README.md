@@ -85,13 +85,15 @@ saved.
   command the phone checks `GET /{vin}/status`; if the car isn't awake it shows
   "Waking…" and issues `POST /{vin}/wake` (which can take up to ~90s) before
   sending the command. State refreshes use a 35s timeout; you'll see "Timed out
-  (car asleep?)" if a read exceeds that — just retry.
-- **Temperature** is tracked in °C internally (Tessie's `set_temperature` takes
+  (car asleep?)" if a read exceeds that — just retry. When the car is asleep,
+  the "More Controls" menu also shows an explicit **Wake** row so you can wake
+  it without sending another command.
+- **Temperature** is tracked in °C internally (Tessie's `set_temperatures` takes
   Celsius) and clamped to 15–28°C. The ±1° buttons step from the last known
   target; a refresh re-syncs it to the car's actual setting.
 - **Endpoints used:** `GET /{vin}/status`, `GET /{vin}/state`,
   `POST /{vin}/wake`, `POST /{vin}/command/{lock|unlock|start_climate|
-  stop_climate|set_temperature|activate_front_trunk|activate_rear_trunk|
+  stop_climate|set_temperatures|activate_front_trunk|activate_rear_trunk|
   open_charge_port}`.
 - **Security:** anyone with physical access to your unlocked phone could open
   the settings page, but the saved token is masked. Consider a Tessie token

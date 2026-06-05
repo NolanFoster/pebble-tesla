@@ -341,7 +341,7 @@ describe('setTemperature', function () {
     ackStatus('awake');
     var xhr = global.XMLHttpRequest.last();
     expect(xhr.method).toBe('POST');
-    expect(xhr.url).toContain('/command/set_temperature?temperature=22');
+    expect(xhr.url).toContain('/command/set_temperatures?temperature=22');
     xhr.respond(200, {});
     expect(global.Pebble.sendAppMessage).toHaveBeenCalledWith(
       { STATUS: 'Set 22°C' }, expect.any(Function), expect.any(Function));
@@ -430,8 +430,8 @@ describe('handleCommand', function () {
     [8, '/command/activate_rear_trunk'],
     [9, '/command/open_charge_port'],
     [0, '/state?use_cache=false'],
-    [5, '/command/set_temperature?temperature='],
-    [6, '/command/set_temperature?temperature=']
+    [5, '/command/set_temperatures?temperature='],
+    [6, '/command/set_temperatures?temperature=']
   ];
 
   cases.forEach(function (c) {
@@ -441,6 +441,26 @@ describe('handleCommand', function () {
       ackStatus('awake'); // every command (and refresh) first checks /status
       expect(global.XMLHttpRequest.last().url).toContain(c[1]);
     });
+  });
+
+  test('WAKE (10) posts /wake directly then refreshes state', function () {
+    var m = load(CONFIGURED);
+    m.handleCommand(m.CMD.WAKE);
+    // No /status precheck — wake is the whole action.
+    var wake = global.XMLHttpRequest.last();
+    expect(wake.method).toBe('POST');
+    expect(wake.url).toContain('/wake');
+    wake.respond(200, { result: true });
+    // After waking it refreshes: GET /status then GET /state.
+    expect(global.XMLHttpRequest.last().url).toContain('/status');
+  });
+
+  test('WAKE (10) reports a timeout when wake returns result:false', function () {
+    var m = load(CONFIGURED);
+    m.handleCommand(m.CMD.WAKE);
+    global.XMLHttpRequest.last().respond(200, { result: false });
+    expect(global.Pebble.sendAppMessage).toHaveBeenCalledWith(
+      { ERROR: 'Wake timed out' }, expect.any(Function), expect.any(Function));
   });
 
   test('unknown code reports an error and opens no request', function () {
