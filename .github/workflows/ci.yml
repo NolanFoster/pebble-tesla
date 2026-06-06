@@ -2,7 +2,14 @@ name: CI
 
 on:
   push:
+    branches: [staging, main]
   pull_request:
+
+# One run per ref; a new push cancels the in-flight run. With the push branch
+# filter, a PR branch runs the tests once (via pull_request) rather than twice.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 # The emulator/integration tests (test/emulator/) are intentionally NOT run in
 # CI: they need the Rebble pebble-tool + QEMU, which aren't available here.
