@@ -69,6 +69,9 @@
         { "type": "bitmap", "name": "ICON_CHARGE_DARK",       "file": "images/charge_black.png" },
         { "type": "bitmap", "name": "ICON_REFRESH_DARK",      "file": "images/refresh_black.png" }
       ]
-    }
+    },
+    "publishedMedia": [
+      { "name": "TESLA_GLANCE", "id": 1, "glance": "IMAGE_MENU_ICON" }
+    ]
   }
 }

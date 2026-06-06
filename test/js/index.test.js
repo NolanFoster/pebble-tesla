@@ -352,7 +352,10 @@ describe('AppGlance', function () {
     expect(global.Pebble.appGlanceReload).toHaveBeenCalledTimes(1);
     var slices = global.Pebble.appGlanceReload.mock.calls[0][0];
     expect(slices).toEqual([
-      { layout: { subtitleTemplateString: '84% · 240 mi · Locked · Climate on' } }
+      { layout: {
+        icon: 'app://images/TESLA_GLANCE',
+        subtitleTemplateString: '84% · 240 mi · Locked · Climate on'
+      } }
     ]);
   });
 

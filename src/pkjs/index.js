@@ -194,13 +194,18 @@ function buildGlanceSubtitle(v) {
   return parts.join(' · ');
 }
 
+// The glance icon. PebbleKit JS *requires* layout.icon — a slice without it is
+// rejected (the failure callback fires and nothing appears). This is our own
+// sedan glyph, declared as publishedMedia "TESLA_GLANCE" in package.json and
+// referenced here via the app:// scheme.
+var GLANCE_ICON = 'app://images/TESLA_GLANCE';
+
 // Publish (reload) the app's launcher glance. A single slice with no expiration
-// so it persists until the next reload. The icon is omitted so the launcher
-// falls back to the app's own icon. appGlanceReload arrived with the AppGlance
-// API (SDK 4.0); guard so older runtimes simply skip it.
+// so it persists until the next reload. appGlanceReload arrived with the
+// AppGlance API (SDK 4.0); guard so older runtimes simply skip it.
 function updateGlance(v) {
   if (typeof Pebble === 'undefined' || !Pebble.appGlanceReload) return;
-  var slice = { layout: { subtitleTemplateString: buildGlanceSubtitle(v) } };
+  var slice = { layout: { icon: GLANCE_ICON, subtitleTemplateString: buildGlanceSubtitle(v) } };
   Pebble.appGlanceReload([slice],
     function () {},
     function (e) { console.log('appGlanceReload failed: ' + JSON.stringify(e)); });
