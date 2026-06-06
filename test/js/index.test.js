@@ -321,6 +321,50 @@ describe('refreshState', function () {
   });
 });
 
+describe('AppGlance', function () {
+  var STATE = {
+    state: 'online',
+    display_name: 'Bumblebee',
+    charge_state: { battery_level: 84, battery_range: 240.4 },
+    climate_state: { inside_temp: 21, driver_temp_setting: 22, is_climate_on: true },
+    vehicle_state: { locked: true }
+  };
+
+  describe('buildGlanceSubtitle', function () {
+    test('battery + range + lock + climate', function () {
+      var m = load(CONFIGURED);
+      expect(m.buildGlanceSubtitle({ battery: 84, range: 240, locked: true, climateOn: true }))
+        .toBe('84% · 240 mi · Locked · Climate on');
+    });
+
+    test('omits range when zero and shows Unlocked, no climate when off', function () {
+      var m = load(CONFIGURED);
+      expect(m.buildGlanceSubtitle({ battery: 50, range: 0, locked: false, climateOn: false }))
+        .toBe('50% · Unlocked');
+    });
+  });
+
+  test('refresh reloads the glance from the same values pushed to the watch', function () {
+    var m = load(CONFIGURED);
+    m.refreshState();
+    ackStatus('awake');
+    global.XMLHttpRequest.last().respond(200, STATE);
+    expect(global.Pebble.appGlanceReload).toHaveBeenCalledTimes(1);
+    var slices = global.Pebble.appGlanceReload.mock.calls[0][0];
+    expect(slices).toEqual([
+      { layout: { subtitleTemplateString: '84% · 240 mi · Locked · Climate on' } }
+    ]);
+  });
+
+  test('updateGlance is a no-op when the runtime lacks appGlanceReload', function () {
+    var m = load(CONFIGURED);
+    delete global.Pebble.appGlanceReload;
+    expect(function () {
+      m.updateGlance({ battery: 84, range: 240, locked: true, climateOn: false });
+    }).not.toThrow();
+  });
+});
+
 describe('setTemperature', function () {
   test('clamps to [15,28]', function () {
     var hi = load(Object.assign({ last_target: '28' }, CONFIGURED));
