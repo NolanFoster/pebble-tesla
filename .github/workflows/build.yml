@@ -19,22 +19,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The image activates the SDK core for the in-image `pebble` user, but the
-      # job runs as root (so checkout can write the workspace). Root therefore
-      # has no SDK and pebble-tool would try to fetch "latest" from the dead
-      # official download server (DNS failure). So install the SDK core for root
-      # from the same community mirror the image uses. NO_TRACKING opts out of
-      # the interactive analytics prompt (no stdin in CI -> EOFError otherwise).
-      - name: Install Pebble SDK core for root
-        env:
-          # Matches PEBBLE_SDK_VERSION baked into rebble/pebble-sdk.
-          SDK_VERSION: '4.3'
-          SDK_URL: 'https://github.com/aveao/PebbleArchive/raw/master/SDKCores/sdk-core-4.3.tar.bz2'
+      # The image already has the SDK core installed AND activated for its
+      # in-image `pebble` user (under /home/pebble/.pebble-sdk). The job runs as
+      # root (so checkout can write the workspace), and root has no SDK — and we
+      # can't install one, because the image's ancient Python 2.7 cert bundle
+      # fails TLS verification against modern GitHub (and the official download
+      # server is dead anyway). So just point root's SDK home at the pre-installed
+      # one via a symlink. Its virtualenv keeps its original absolute paths under
+      # /home/pebble, so nothing needs relocating. NO_TRACKING already exists in
+      # that dir, so the interactive analytics prompt stays suppressed.
+      - name: Use the SDK core pre-installed in the image
         run: |
-          mkdir -p "$HOME/.pebble-sdk"
-          touch "$HOME/.pebble-sdk/NO_TRACKING"
-          yes | pebble sdk install "$SDK_URL"
-          pebble sdk activate "$SDK_VERSION"
+          test -d /home/pebble/.pebble-sdk
+          ln -sfn /home/pebble/.pebble-sdk "$HOME/.pebble-sdk"
+          pebble sdk list
 
       - name: pebble build
         run: pebble build
