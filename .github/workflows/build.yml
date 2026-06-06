@@ -19,27 +19,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The image ships an SDK core already installed+activated for some non-root
-      # user, but the job runs as root (so checkout can write the workspace) and
-      # root has no SDK. We can't install one: the official download server is
-      # dead, and the image's Python 2.7 cert bundle fails TLS against the GitHub
-      # mirror. So auto-detect the pre-installed SDK home and symlink root's to
-      # it (its virtualenv keeps its original absolute paths, so nothing moves).
-      # Diagnostics are printed so the path can be pinned down if detection misses.
+      # The image has the SDK core installed+activated under /root/.pebble-sdk,
+      # but the job runs as root with GitHub's HOME=/github/home override, so the
+      # tool looks in the wrong place and falls back to downloading — which fails
+      # (dead official server; image's Python 2.7 cert bundle can't do GitHub TLS).
+      # So locate the .pebble-sdk that actually contains an SDK core and point
+      # $HOME/.pebble-sdk at it. The SDK virtualenv keeps its original absolute
+      # paths, so nothing needs relocating.
       - name: Use the SDK core pre-installed in the image
         shell: bash
         run: |
           set -x
-          id; echo "HOME=$HOME"; cat /etc/passwd
-          find / -maxdepth 6 -type d -name '.pebble-sdk' 2>/dev/null
-          find / -maxdepth 8 -type d \( -name sdk-core -o -name SDKs \) 2>/dev/null | head
-          sdk="$(find / -maxdepth 6 -type d -name '.pebble-sdk' 2>/dev/null | grep -v "^${HOME}/" | head -1)"
-          echo "detected SDK home: [$sdk]"
-          if [ -n "$sdk" ] && [ "$sdk" != "$HOME/.pebble-sdk" ]; then
+          core="$(find / -maxdepth 8 -type d -name sdk-core 2>/dev/null | head -1)"
+          test -n "$core"                 # fail loudly if the image layout changed
+          sdk="${core%%/SDKs/*}"          # /root/.pebble-sdk/SDKs/4.3/sdk-core -> /root/.pebble-sdk
+          echo "SDK home: $sdk"
+          if [ "$sdk" != "$HOME/.pebble-sdk" ]; then
             ln -sfn "$sdk" "$HOME/.pebble-sdk"
           fi
           touch "$HOME/.pebble-sdk/NO_TRACKING" 2>/dev/null || true
-          pebble sdk list || true
+          pebble sdk list
 
       - name: pebble build
         run: pebble build
