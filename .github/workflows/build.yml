@@ -19,6 +19,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # pebble-tool prompts interactively to opt in to analytics on first run.
+      # CI has no stdin, so the prompt throws EOFError and the build fails.
+      # Dropping a NO_TRACKING file in the SDK home opts out non-interactively.
+      - name: Disable Pebble SDK analytics prompt
+        run: |
+          for d in "$HOME/.pebble-sdk" /github/home/.pebble-sdk /root/.pebble-sdk; do
+            mkdir -p "$d" && touch "$d/NO_TRACKING"
+          done
+
       - name: pebble build
         run: pebble build
 
