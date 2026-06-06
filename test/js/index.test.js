@@ -239,6 +239,34 @@ describe('refreshState', function () {
     expect(global.localStorage.getItem('last_target')).toBe('22'); // stored in °C
   });
 
+  test('forces a live read (use_cache=false) only when the car is awake', function () {
+    var m = load(CONFIGURED);
+    m.refreshState();
+    ackStatus('awake');
+    expect(global.XMLHttpRequest.last().url).toContain('/state?use_cache=false');
+  });
+
+  test('takes the cached read (no live read) when the car is asleep, avoiding a 408', function () {
+    var m = load(CONFIGURED);
+    m.refreshState();
+    ackStatus('asleep');
+    var xhr = global.XMLHttpRequest.last();
+    expect(xhr.url).toContain('/state');
+    expect(xhr.url).not.toContain('use_cache=false');
+    // a cached snapshot still drives the card
+    xhr.respond(200, STATE);
+    expect(global.Pebble.sendAppMessage).toHaveBeenCalled();
+  });
+
+  test('takes the cached read when the awake status is unknown', function () {
+    var m = load(CONFIGURED);
+    m.refreshState();
+    ackStatus('nonsense'); // -> AWAKE_UNKNOWN
+    var xhr = global.XMLHttpRequest.last();
+    expect(xhr.url).toContain('/state');
+    expect(xhr.url).not.toContain('use_cache=false');
+  });
+
   test('includes PAINT_COLOR when the car paint is identifiable', function () {
     var m = load(CONFIGURED);
     m.refreshState();
