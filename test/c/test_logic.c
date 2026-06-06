@@ -153,18 +153,18 @@ void test_power_subtitle(void) {
 
 void test_controls_menu_rows_hides_wake_when_awake(void) {
   ControlsRow rows[CONTROLS_MAX_ROWS];
-  VehicleState s = base();  // awake
+  VehicleState s = base();  // awake, disconnected (no charge toggle)
   int n = controls_menu_rows(&s, rows, CONTROLS_MAX_ROWS);
-  TEST_ASSERT_EQUAL_INT(6, n);
+  TEST_ASSERT_EQUAL_INT(8, n);                        // 5 head + Limit± + Refresh
   TEST_ASSERT_EQUAL_INT(CTRL_ROW_TEMP_UP, rows[0]);   // no Wake row
-  TEST_ASSERT_EQUAL_INT(CTRL_ROW_REFRESH, rows[5]);
+  TEST_ASSERT_EQUAL_INT(CTRL_ROW_REFRESH, rows[7]);
 
   // Same for unknown / waiting-for-sleep: Wake only shows when asleep.
   s.awake = AWAKE_UNKNOWN;
-  TEST_ASSERT_EQUAL_INT(6, controls_menu_rows(&s, rows, CONTROLS_MAX_ROWS));
+  TEST_ASSERT_EQUAL_INT(8, controls_menu_rows(&s, rows, CONTROLS_MAX_ROWS));
   TEST_ASSERT_EQUAL_INT(CTRL_ROW_TEMP_UP, rows[0]);
   s.awake = AWAKE_WAITING;
-  TEST_ASSERT_EQUAL_INT(6, controls_menu_rows(&s, rows, CONTROLS_MAX_ROWS));
+  TEST_ASSERT_EQUAL_INT(8, controls_menu_rows(&s, rows, CONTROLS_MAX_ROWS));
 }
 
 void test_controls_menu_rows_shows_wake_when_asleep(void) {
@@ -172,10 +172,103 @@ void test_controls_menu_rows_shows_wake_when_asleep(void) {
   VehicleState s = base();
   s.awake = AWAKE_ASLEEP;
   int n = controls_menu_rows(&s, rows, CONTROLS_MAX_ROWS);
-  TEST_ASSERT_EQUAL_INT(7, n);
+  TEST_ASSERT_EQUAL_INT(9, n);                        // Wake + 8
   TEST_ASSERT_EQUAL_INT(CTRL_ROW_WAKE, rows[0]);      // Wake is first
   TEST_ASSERT_EQUAL_INT(CTRL_ROW_TEMP_UP, rows[1]);
-  TEST_ASSERT_EQUAL_INT(CTRL_ROW_REFRESH, rows[6]);
+  TEST_ASSERT_EQUAL_INT(CTRL_ROW_REFRESH, rows[8]);
+}
+
+void test_controls_menu_rows_shows_charge_toggle_when_plugged_in(void) {
+  ControlsRow rows[CONTROLS_MAX_ROWS];
+  VehicleState s = base();          // awake
+  s.charging = CHARGE_CHARGING;     // plugged in -> charge toggle present
+  int n = controls_menu_rows(&s, rows, CONTROLS_MAX_ROWS);
+  TEST_ASSERT_EQUAL_INT(9, n);                        // 5 head + Charge + Limit± + Refresh
+  TEST_ASSERT_EQUAL_INT(CTRL_ROW_CHARGE_PORT, rows[4]);
+  TEST_ASSERT_EQUAL_INT(CTRL_ROW_CHARGE, rows[5]);    // right after Charge Port
+  TEST_ASSERT_EQUAL_INT(CTRL_ROW_LIMIT_UP, rows[6]);
+  TEST_ASSERT_EQUAL_INT(CTRL_ROW_REFRESH, rows[8]);
+
+  // Asleep + plugged in fills every row (Wake + the charge toggle).
+  s.awake = AWAKE_ASLEEP;
+  TEST_ASSERT_EQUAL_INT(CONTROLS_MAX_ROWS,
+                        controls_menu_rows(&s, rows, CONTROLS_MAX_ROWS));
+
+  // Disconnected hides the toggle again.
+  s.awake = AWAKE_AWAKE;
+  s.charging = CHARGE_DISCONNECTED;
+  TEST_ASSERT_EQUAL_INT(8, controls_menu_rows(&s, rows, CONTROLS_MAX_ROWS));
+}
+
+void test_charge_toggle_and_connected(void) {
+  VehicleState s = base();
+
+  s.charging = CHARGE_CHARGING;
+  TEST_ASSERT_TRUE(charge_is_connected(&s));
+  TEST_ASSERT_EQUAL_STRING("Stop Charging", charge_toggle_label(&s));
+  TEST_ASSERT_EQUAL_INT(CMD_CHARGE_STOP, charge_toggle_cmd(&s));
+
+  s.charging = CHARGE_STOPPED;
+  TEST_ASSERT_TRUE(charge_is_connected(&s));
+  TEST_ASSERT_EQUAL_STRING("Start Charging", charge_toggle_label(&s));
+  TEST_ASSERT_EQUAL_INT(CMD_CHARGE_START, charge_toggle_cmd(&s));
+
+  s.charging = CHARGE_COMPLETE;
+  TEST_ASSERT_TRUE(charge_is_connected(&s));
+
+  s.charging = CHARGE_DISCONNECTED;
+  TEST_ASSERT_FALSE(charge_is_connected(&s));
+  s.charging = CHARGE_UNKNOWN;
+  TEST_ASSERT_FALSE(charge_is_connected(&s));
+}
+
+void test_charge_subtitle(void) {
+  char buf[40];
+  VehicleState s = base();
+
+  s.charging = CHARGE_CHARGING; s.charge_eta = 80;   // 1h20m
+  TEST_ASSERT_TRUE(charge_show_status(&s));
+  fmt_charge_subtitle(&s, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("Charging · 1h20m", buf);
+
+  s.charge_eta = 45;                                 // under an hour
+  fmt_charge_subtitle(&s, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("Charging · 45m", buf);
+
+  s.charge_eta = -1;                                 // unknown eta
+  fmt_charge_subtitle(&s, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("Charging", buf);
+
+  s.charging = CHARGE_COMPLETE;
+  TEST_ASSERT_TRUE(charge_show_status(&s));
+  fmt_charge_subtitle(&s, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("Charge complete", buf);
+
+  s.charging = CHARGE_STOPPED;                       // plugged but idle -> power footer
+  TEST_ASSERT_FALSE(charge_show_status(&s));
+  fmt_charge_subtitle(&s, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("", buf);
+
+  s.charging = CHARGE_DISCONNECTED;
+  TEST_ASSERT_FALSE(charge_show_status(&s));
+}
+
+void test_controls_row_label_cmd_limit(void) {
+  TEST_ASSERT_EQUAL_STRING("Limit +5%", controls_row_label(CTRL_ROW_LIMIT_UP));
+  TEST_ASSERT_EQUAL_STRING("Limit -5%", controls_row_label(CTRL_ROW_LIMIT_DOWN));
+  TEST_ASSERT_EQUAL_INT(CMD_LIMIT_UP, controls_row_cmd(CTRL_ROW_LIMIT_UP));
+  TEST_ASSERT_EQUAL_INT(CMD_LIMIT_DOWN, controls_row_cmd(CTRL_ROW_LIMIT_DOWN));
+  TEST_ASSERT_EQUAL_INT(0, controls_row_temp_delta(CTRL_ROW_LIMIT_UP));
+}
+
+void test_status_is_confirmation(void) {
+  TEST_ASSERT_TRUE(status_is_confirmation("Locked"));
+  TEST_ASSERT_TRUE(status_is_confirmation("Set 22°C"));
+  TEST_ASSERT_TRUE(status_is_confirmation("Limit 85%"));
+  TEST_ASSERT_FALSE(status_is_confirmation("Waking…"));     // ends with ellipsis
+  TEST_ASSERT_FALSE(status_is_confirmation("Locking…"));
+  TEST_ASSERT_FALSE(status_is_confirmation(""));
+  TEST_ASSERT_FALSE(status_is_confirmation(NULL));
 }
 
 void test_controls_row_label_cmd_delta(void) {
@@ -221,6 +314,11 @@ int main(void) {
   RUN_TEST(test_power_subtitle);
   RUN_TEST(test_controls_menu_rows_hides_wake_when_awake);
   RUN_TEST(test_controls_menu_rows_shows_wake_when_asleep);
+  RUN_TEST(test_controls_menu_rows_shows_charge_toggle_when_plugged_in);
+  RUN_TEST(test_charge_toggle_and_connected);
+  RUN_TEST(test_charge_subtitle);
+  RUN_TEST(test_controls_row_label_cmd_limit);
+  RUN_TEST(test_status_is_confirmation);
   RUN_TEST(test_controls_row_label_cmd_delta);
   RUN_TEST(test_status_header_text);
   RUN_TEST(test_small_buffer_is_null_terminated);

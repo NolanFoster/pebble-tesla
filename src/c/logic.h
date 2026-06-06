@@ -24,6 +24,10 @@ typedef enum {
   CMD_TRUNK        = 8,
   CMD_CHARGE_PORT  = 9,
   CMD_WAKE         = 10,
+  CMD_CHARGE_START = 11,
+  CMD_CHARGE_STOP  = 12,
+  CMD_LIMIT_UP     = 13,  // raise charge limit (+5%)
+  CMD_LIMIT_DOWN   = 14,  // lower charge limit (-5%)
 } TeslaCommand;
 
 // Vehicle power status from Tessie GET /{vin}/status. Commands can only be sent
@@ -52,6 +56,18 @@ typedef enum {
   PAINT_BLUE    = 5,   // Deep Blue Metallic
 } PaintColor;
 
+// Charging status, derived from Tessie charge_state.charging_state. Sent
+// phone->watch as the CHARGING message key (int). Keep in sync with chargeCode()
+// in index.js. "Connected" (plugged in) is CHARGING/STOPPED/COMPLETE; only those
+// states offer the Start/Stop-charging control.
+typedef enum {
+  CHARGE_UNKNOWN      = -1,  // not reported
+  CHARGE_DISCONNECTED = 0,   // unplugged
+  CHARGE_STOPPED      = 1,   // plugged in, not charging (or NoPower)
+  CHARGE_CHARGING     = 2,   // actively charging (or Starting)
+  CHARGE_COMPLETE     = 3,   // plugged in, reached the limit
+} ChargeState;
+
 // Snapshot of vehicle state used purely for rendering decisions.
 typedef struct {
   int  battery;       // percent, or <0 when unknown
@@ -62,6 +78,9 @@ typedef struct {
   bool climate_on;
   bool online;
   int  awake;         // AwakeStatus
+  int  charging;      // ChargeState
+  int  charge_limit;  // target charge percent, or <0 when unknown
+  int  charge_eta;    // minutes to the limit while charging, or <0 when unknown
 } VehicleState;
 
 // Does this command carry a TEMP_DELTA argument in the outbox dict?
@@ -76,22 +95,45 @@ typedef enum {
   CTRL_ROW_FRUNK,
   CTRL_ROW_TRUNK,
   CTRL_ROW_CHARGE_PORT,
+  CTRL_ROW_CHARGE,       // start/stop charging (only when plugged in)
+  CTRL_ROW_LIMIT_UP,     // charge limit +5%
+  CTRL_ROW_LIMIT_DOWN,   // charge limit -5%
   CTRL_ROW_REFRESH,
 } ControlsRow;
-#define CONTROLS_MAX_ROWS 7
+#define CONTROLS_MAX_ROWS 10
 
 // Fills `rows` with the visible rows for the current state and returns the
-// count (<= max). CTRL_ROW_WAKE is included first only when the car is asleep.
+// count (<= max). CTRL_ROW_WAKE is included first only when the car is asleep;
+// CTRL_ROW_CHARGE only when the car is plugged in (see charge_is_connected).
 int         controls_menu_rows(const VehicleState *s, ControlsRow *rows, int max);
 const char *controls_row_label(ControlsRow row);     // "Wake", "Temp +1°", …
 int         controls_row_cmd(ControlsRow row);        // CMD_WAKE, CMD_TEMP_UP, …
 int         controls_row_temp_delta(ControlsRow row); // +1 / -1 / 0
+
+// Charging helpers. The Start/Stop-charging row is a single state-aware toggle
+// (like the action-bar lock/climate toggles), so its label and command depend on
+// whether the car is currently charging.
+bool        charge_is_connected(const VehicleState *s);  // plugged in?
+const char *charge_toggle_label(const VehicleState *s);  // "Stop Charging" / "Start Charging"
+int         charge_toggle_cmd(const VehicleState *s);    // CMD_CHARGE_STOP / CMD_CHARGE_START
 
 // Status-row subtitles. Each writes a NUL-terminated string into `out` (size n).
 void fmt_battery_subtitle(const VehicleState *s, char *out, size_t n);
 void fmt_lock_subtitle(const VehicleState *s, char *out, size_t n);
 void fmt_climate_subtitle(const VehicleState *s, char *out, size_t n);
 void fmt_power_subtitle(const VehicleState *s, char *out, size_t n);
+
+// Charging footer, e.g. "Charging · 1h20m", "Charging" (eta unknown) or
+// "Charge complete". Writes "" when not charging/complete. `charge_show_status`
+// says whether this should replace the power footer (true while charging or once
+// complete; otherwise the awake/power state is the more useful footer).
+void fmt_charge_subtitle(const VehicleState *s, char *out, size_t n);
+bool charge_show_status(const VehicleState *s);
+
+// True when a transient STATUS string is a *final* confirmation (drives a short
+// success vibration) rather than an in-progress message. Progress messages end
+// with an ellipsis ("Waking…", "Locking…"); confirmations ("Locked") do not.
+bool status_is_confirmation(const char *msg);
 
 // Battery gauge text, split so the percentage can sit inside a circular gauge
 // and the range just beneath it. `out` is always NUL-terminated.

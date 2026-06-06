@@ -3,6 +3,7 @@
 
 #include "logic.h"
 #include <stdio.h>
+#include <string.h>
 
 bool cmd_has_temp_delta(int cmd) {
   return cmd == CMD_TEMP_UP || cmd == CMD_TEMP_DOWN;
@@ -12,12 +13,18 @@ int controls_menu_rows(const VehicleState *s, ControlsRow *rows, int max) {
   int n = 0;
   // Wake only makes sense (and is only offered) when the car is asleep.
   if (s->awake == AWAKE_ASLEEP && n < max) rows[n++] = CTRL_ROW_WAKE;
-  static const ControlsRow base[] = {
+  static const ControlsRow head[] = {
     CTRL_ROW_TEMP_UP, CTRL_ROW_TEMP_DOWN, CTRL_ROW_FRUNK,
-    CTRL_ROW_TRUNK, CTRL_ROW_CHARGE_PORT, CTRL_ROW_REFRESH,
+    CTRL_ROW_TRUNK, CTRL_ROW_CHARGE_PORT,
   };
-  for (size_t i = 0; i < sizeof(base) / sizeof(base[0]) && n < max; i++)
-    rows[n++] = base[i];
+  for (size_t i = 0; i < sizeof(head) / sizeof(head[0]) && n < max; i++)
+    rows[n++] = head[i];
+  // Charging group, kept next to Charge Port. Start/Stop only when plugged in;
+  // the limit can be nudged whenever (it just won't take effect until plugged).
+  if (charge_is_connected(s) && n < max) rows[n++] = CTRL_ROW_CHARGE;
+  if (n < max) rows[n++] = CTRL_ROW_LIMIT_UP;
+  if (n < max) rows[n++] = CTRL_ROW_LIMIT_DOWN;
+  if (n < max) rows[n++] = CTRL_ROW_REFRESH;
   return n;
 }
 
@@ -29,6 +36,9 @@ const char *controls_row_label(ControlsRow row) {
     case CTRL_ROW_FRUNK:       return "Open Frunk";
     case CTRL_ROW_TRUNK:       return "Open Trunk";
     case CTRL_ROW_CHARGE_PORT: return "Charge Port";
+    case CTRL_ROW_CHARGE:      return "Start Charging"; // dynamic; see charge_toggle_label
+    case CTRL_ROW_LIMIT_UP:    return "Limit +5%";
+    case CTRL_ROW_LIMIT_DOWN:  return "Limit -5%";
     case CTRL_ROW_REFRESH:     return "Refresh";
   }
   return "";
@@ -42,6 +52,9 @@ int controls_row_cmd(ControlsRow row) {
     case CTRL_ROW_FRUNK:       return CMD_FRUNK;
     case CTRL_ROW_TRUNK:       return CMD_TRUNK;
     case CTRL_ROW_CHARGE_PORT: return CMD_CHARGE_PORT;
+    case CTRL_ROW_CHARGE:      return CMD_CHARGE_START; // dynamic; see charge_toggle_cmd
+    case CTRL_ROW_LIMIT_UP:    return CMD_LIMIT_UP;
+    case CTRL_ROW_LIMIT_DOWN:  return CMD_LIMIT_DOWN;
     case CTRL_ROW_REFRESH:     return CMD_REFRESH;
   }
   return CMD_REFRESH;
@@ -51,6 +64,20 @@ int controls_row_temp_delta(ControlsRow row) {
   if (row == CTRL_ROW_TEMP_UP)   return  1;
   if (row == CTRL_ROW_TEMP_DOWN) return -1;
   return 0;
+}
+
+bool charge_is_connected(const VehicleState *s) {
+  return s->charging == CHARGE_CHARGING ||
+         s->charging == CHARGE_STOPPED  ||
+         s->charging == CHARGE_COMPLETE;
+}
+
+const char *charge_toggle_label(const VehicleState *s) {
+  return s->charging == CHARGE_CHARGING ? "Stop Charging" : "Start Charging";
+}
+
+int charge_toggle_cmd(const VehicleState *s) {
+  return s->charging == CHARGE_CHARGING ? CMD_CHARGE_STOP : CMD_CHARGE_START;
 }
 
 void fmt_battery_subtitle(const VehicleState *s, char *out, size_t n) {
@@ -110,6 +137,41 @@ const char *awake_label(int awake) {
 
 void fmt_power_subtitle(const VehicleState *s, char *out, size_t n) {
   snprintf(out, n, "%s", awake_label(s->awake));
+}
+
+bool charge_show_status(const VehicleState *s) {
+  return s->charging == CHARGE_CHARGING || s->charging == CHARGE_COMPLETE;
+}
+
+void fmt_charge_subtitle(const VehicleState *s, char *out, size_t n) {
+  if (s->charging == CHARGE_COMPLETE) {
+    snprintf(out, n, "Charge complete");
+  } else if (s->charging == CHARGE_CHARGING) {
+    int m = s->charge_eta;
+    if (m > 0) {
+      int h = m / 60, mm = m % 60;
+      if (h > 0) snprintf(out, n, "Charging · %dh%02dm", h, mm);
+      else       snprintf(out, n, "Charging · %dm", mm);
+    } else {
+      snprintf(out, n, "Charging");
+    }
+  } else {
+    snprintf(out, n, "%s", "");
+  }
+}
+
+bool status_is_confirmation(const char *msg) {
+  if (!msg || !msg[0]) return false;
+  size_t len = strlen(msg);
+  // In-progress strings end with the UTF-8 ellipsis "…" (E2 80 A6); those are
+  // not confirmations (no success buzz until the command actually lands).
+  if (len >= 3 &&
+      (unsigned char)msg[len - 3] == 0xE2 &&
+      (unsigned char)msg[len - 2] == 0x80 &&
+      (unsigned char)msg[len - 1] == 0xA6) {
+    return false;
+  }
+  return true;
 }
 
 const char *status_header_text(const char *name) {
