@@ -103,7 +103,7 @@ void fmt_battery_num(const VehicleState *s, char *out, size_t n) {
 
 void fmt_range(const VehicleState *s, char *out, size_t n) {
   if (s->range >= 0)
-    snprintf(out, n, "%d mi", s->range);
+    snprintf(out, n, "%d %s", s->range, s->dist_km ? "km" : "mi");
   else
     snprintf(out, n, "%s", "");
 }
