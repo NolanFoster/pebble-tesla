@@ -81,6 +81,7 @@ typedef struct {
   int  charging;      // ChargeState
   int  charge_limit;  // target charge percent, or <0 when unknown
   int  charge_eta;    // minutes to the limit while charging, or <0 when unknown
+  bool dist_km;       // render range/distance in km (else miles)
 } VehicleState;
 
 // Does this command carry a TEMP_DELTA argument in the outbox dict?

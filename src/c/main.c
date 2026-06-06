@@ -19,6 +19,7 @@
 #define KEY_CHARGING     MESSAGE_KEY_CHARGING
 #define KEY_CHARGE_LIMIT MESSAGE_KEY_CHARGE_LIMIT
 #define KEY_CHARGE_TIME  MESSAGE_KEY_CHARGE_TIME
+#define KEY_DIST_UNIT    MESSAGE_KEY_DIST_UNIT
 
 // ---- Command codes (TeslaCommand enum) come from logic.h ----
 
@@ -34,6 +35,8 @@ static int      s_awake       = AWAKE_UNKNOWN;
 static int      s_charging    = CHARGE_UNKNOWN;  // ChargeState
 static int      s_charge_limit = -1;             // target percent, <0 unknown
 static int      s_charge_eta  = -1;              // minutes to limit while charging
+static bool     s_dist_km     = false;           // render range in km (else miles)
+static bool     s_connected   = true;            // phone (PebbleKit JS) reachable
 static char     s_name[100]   = "";   // vehicle name (UTF-8; room for ~24 emoji)
 static char     s_error[64]   = "";
 static int      s_paint       = PAINT_UNKNOWN;  // exterior paint -> accent theme
@@ -134,7 +137,7 @@ static VehicleState current_state(void) {
     .locked = s_locked, .climate_on = s_climate_on, .online = s_online,
     .awake = s_awake,
     .charging = s_charging, .charge_limit = s_charge_limit,
-    .charge_eta = s_charge_eta,
+    .charge_eta = s_charge_eta, .dist_km = s_dist_km,
   };
 }
 
@@ -148,13 +151,13 @@ static VehicleState current_state(void) {
 // invalidates an old layout rather than reading it back wrong.
 // ---------------------------------------------------------------------------
 #define PERSIST_KEY_STATE   1
-#define PERSIST_VERSION      2   // bump when the struct layout changes
+#define PERSIST_VERSION      3   // bump when the struct layout changes
 
 typedef struct {
   int32_t version;
   int32_t battery, range, inside_temp, target_temp, awake, paint;
   int32_t charging, charge_limit, charge_eta;
-  uint8_t locked, climate_on, online;
+  uint8_t locked, climate_on, online, dist_km;
   char    name[100];
 } PersistState;
 
@@ -166,6 +169,7 @@ static void save_state(void) {
     .awake = s_awake, .paint = s_paint,
     .charging = s_charging, .charge_limit = s_charge_limit, .charge_eta = s_charge_eta,
     .locked = s_locked, .climate_on = s_climate_on, .online = s_online,
+    .dist_km = s_dist_km,
   };
   strncpy(p.name, s_name, sizeof(p.name) - 1);
   p.name[sizeof(p.name) - 1] = '\0';
@@ -184,6 +188,7 @@ static bool load_state(void) {
   s_awake = p.awake; s_paint = p.paint;
   s_charging = p.charging; s_charge_limit = p.charge_limit; s_charge_eta = p.charge_eta;
   s_locked = p.locked; s_climate_on = p.climate_on; s_online = p.online;
+  s_dist_km = p.dist_km;
   strncpy(s_name, p.name, sizeof(s_name) - 1);
   s_name[sizeof(s_name) - 1] = '\0';
   s_anim_pct = s_battery;   // snap the gauge to the cached level (no sweep-up)
@@ -459,11 +464,14 @@ static void card_update_proc(Layer *layer, GContext *gctx) {
     st.climate_on, line, f_body);
   y += pitch;
 
-  // Footer (small) — rectangular displays only; round has no room. While the car
-  // is charging (or done), the charge status is the more useful line, so it
-  // replaces the awake/power state there. Charging is tinted green to draw the eye.
+  // Footer (small) — rectangular displays only; round has no room. Priority:
+  // a lost phone link first (everything else is stale without it), then the
+  // charge status while charging/done, otherwise the awake/power state.
 #if !defined(PBL_ROUND)
-  if (charge_show_status(&st)) {
+  if (!s_connected) {
+    snprintf(line, sizeof(line), "Phone offline");
+    graphics_context_set_text_color(gctx, PBL_IF_COLOR_ELSE(GColorChromeYellow, GColorBlack));
+  } else if (charge_show_status(&st)) {
     fmt_charge_subtitle(&st, line, sizeof(line));
     graphics_context_set_text_color(gctx,
       PBL_IF_COLOR_ELSE(st.charging == CHARGE_CHARGING ? GColorGreen : fg, GColorBlack));
@@ -713,6 +721,12 @@ static void push_controls_window(void) {
 // AppMessage
 // ---------------------------------------------------------------------------
 static void send_command(TeslaCommand cmd, int arg) {
+  // Nothing can reach Tessie without the phone, so give immediate feedback
+  // rather than letting the send fail after a delay.
+  if (!s_connected) {
+    show_status("Phone offline", 2000);
+    return;
+  }
   DictionaryIterator *it;
   AppMessageResult r = app_message_outbox_begin(&it);
   if (r != APP_MSG_OK) {
@@ -770,6 +784,7 @@ static void inbox_received(DictionaryIterator *it, void *ctx) {
   if ((t = dict_find(it, KEY_CHARGING)))     { s_charging = t->value->int32; got_state = true; }
   if ((t = dict_find(it, KEY_CHARGE_LIMIT))) { s_charge_limit = t->value->int32; got_state = true; }
   if ((t = dict_find(it, KEY_CHARGE_TIME)))  { s_charge_eta = t->value->int32; got_state = true; }
+  if ((t = dict_find(it, KEY_DIST_UNIT)))    { s_dist_km = t->value->int32 != 0; got_state = true; }
 
   if (got_state) {
     save_state();                                     // cache for the next cold launch
@@ -796,6 +811,19 @@ static void outbox_failed(DictionaryIterator *it, AppMessageResult reason, void 
 
 static void outbox_sent(DictionaryIterator *it, void *ctx) {
   // command reached the phone; await STATUS/state reply
+}
+
+// ---------------------------------------------------------------------------
+// Bluetooth / phone connection
+//
+// The design guidelines call for handling a lost link gracefully. We track the
+// PebbleKit-JS (phone app) connection, surface a "Phone offline" footer, and
+// short-circuit button presses with the same message (see send_command) so a tap
+// gets instant feedback instead of a delayed "Send failed".
+// ---------------------------------------------------------------------------
+static void connection_handler(bool connected) {
+  s_connected = connected;
+  if (s_card_layer) layer_mark_dirty(s_card_layer);
 }
 
 // ---------------------------------------------------------------------------
@@ -896,6 +924,13 @@ static void init(void) {
   app_message_register_outbox_sent(outbox_sent);
   app_message_open(256, 128);
 
+  // Track the phone link so the card can flag a lost connection and button
+  // presses fail fast (see connection_handler / send_command).
+  s_connected = connection_service_peek_pebble_app_connection();
+  connection_service_subscribe((ConnectionHandlers){
+    .pebble_app_connection_handler = connection_handler,
+  });
+
   window_stack_push(s_main_window, true);
 
   // Pull initial state once JS is ready (JS also auto-refreshes on 'ready')
@@ -903,6 +938,7 @@ static void init(void) {
 }
 
 static void deinit(void) {
+  connection_service_unsubscribe();
   if (s_controls_window) window_destroy(s_controls_window);
   window_destroy(s_main_window);
   unload_icons();

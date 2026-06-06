@@ -82,6 +82,11 @@ void test_battery_pct_and_range(void) {
   fmt_range(&s, buf, sizeof(buf));
   TEST_ASSERT_EQUAL_STRING("240 mi", buf);
 
+  s.dist_km = true;                 // honor the km/mi preference
+  fmt_range(&s, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("240 km", buf);
+  s.dist_km = false;
+
   s.battery = -1;
   fmt_battery_pct(&s, buf, sizeof(buf));
   TEST_ASSERT_EQUAL_STRING("—", buf);

@@ -56,6 +56,7 @@ Open the Pebble phone app → **Tesla Control** → **Settings**. Enter:
 - Tessie API token
 - VIN
 - (optional) show temperatures in °F
+- (optional) show distance in km
 
 The token is stored only in the phone app's local storage and sent directly to
 api.tessie.com over HTTPS. It is never echoed back to the settings page once
@@ -84,6 +85,8 @@ saved.
   also give **haptic feedback** — a short buzz on success, a longer one on error.
 - Cached state is saved on the watch, so a cold launch shows the **last-known**
   values immediately (rather than dashes) while the first refresh is in flight.
+- If the phone link drops, the footer shows **Phone offline** and button presses
+  fail fast with the same message instead of timing out.
 - On color watches (basalt/emery) the action bar uses a Tesla-red accent with
   white icons; diorite falls back to black/white.
 - **Launcher glance:** the phone publishes an AppGlance so the car's latest

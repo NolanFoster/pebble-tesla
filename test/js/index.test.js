@@ -31,7 +31,7 @@ afterEach(function () {
 describe('getConfig', function () {
   test('defaults when storage empty', function () {
     var m = load({});
-    expect(m.getConfig()).toEqual({ token: '', vin: '', useFahrenheit: false, lastTarget: 21, lastLimit: 80 });
+    expect(m.getConfig()).toEqual({ token: '', vin: '', useFahrenheit: false, useKm: false, lastTarget: 21, lastLimit: 80 });
   });
 
   test('parses use_f and last_target', function () {
@@ -234,7 +234,7 @@ describe('refreshState', function () {
     expect(global.Pebble.sendAppMessage).toHaveBeenCalledWith({
       BATTERY: 84, RANGE: 240, LOCKED: 1, CLIMATE_ON: 1,
       INSIDE_TEMP: 21, TARGET_TEMP: 22, ONLINE: 1, AWAKE: 1, NAME: 'Bumblebee',
-      CHARGING: -1, CHARGE_LIMIT: -1, CHARGE_TIME: -1
+      CHARGING: -1, CHARGE_LIMIT: -1, CHARGE_TIME: -1, DIST_UNIT: 0
     }, expect.any(Function), expect.any(Function));
     expect(global.localStorage.getItem('last_target')).toBe('22'); // stored in °C
   });
@@ -318,6 +318,16 @@ describe('refreshState', function () {
     expect(dict.INSIDE_TEMP).toBe(70); // round(21*9/5+32)
     expect(dict.TARGET_TEMP).toBe(72); // round(22*9/5+32)=71.6→72
     expect(global.localStorage.getItem('last_target')).toBe('22'); // still °C
+  });
+
+  test('converts range to km and flags the unit when enabled', function () {
+    var m = load(Object.assign({ use_km: '1' }, CONFIGURED));
+    m.refreshState();
+    ackStatus('awake');
+    global.XMLHttpRequest.last().respond(200, STATE); // battery_range 240.4 mi
+    var dict = global.Pebble.sendAppMessage.mock.calls[0][0];
+    expect(dict.RANGE).toBe(387);     // round(240.4 * 1.609344)
+    expect(dict.DIST_UNIT).toBe(1);
   });
 
   test('sends the vehicle name, preferring display_name', function () {

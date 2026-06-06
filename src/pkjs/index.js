@@ -30,6 +30,7 @@ function getConfig() {
     token: localStorage.getItem('tessie_token') || '',
     vin: localStorage.getItem('tessie_vin') || '',
     useFahrenheit: localStorage.getItem('use_f') === '1',
+    useKm: localStorage.getItem('use_km') === '1',
     lastTarget: parseInt(localStorage.getItem('last_target') || '21', 10), // °C
     lastLimit: parseInt(localStorage.getItem('last_limit') || '80', 10)    // charge %
   };
@@ -162,7 +163,9 @@ function pushState(s, awake) {
   name = Array.from(name).slice(0, 24).join('');
 
   var battery = charge.battery_level != null ? charge.battery_level : 0;
-  var range = charge.battery_range != null ? Math.round(charge.battery_range) : 0;
+  // Tessie reports battery_range in miles; convert to km when the user prefers it.
+  var rangeMi = charge.battery_range != null ? charge.battery_range : 0;
+  var range = Math.round(cfg.useKm ? rangeMi * 1.609344 : rangeMi);
   var locked = !!vehicle.locked;
   var climateOn = !!climate.is_climate_on;
 
@@ -197,7 +200,8 @@ function pushState(s, awake) {
     NAME:         name,
     CHARGING:     charging,
     CHARGE_LIMIT: chargeLimit,
-    CHARGE_TIME:  chargeTime
+    CHARGE_TIME:  chargeTime,
+    DIST_UNIT:    cfg.useKm ? 1 : 0
   };
 
   // Only send the paint color when we can identify it, so the watch keeps its
@@ -212,7 +216,7 @@ function pushState(s, awake) {
   // on the same path as the in-app card (initial refresh, manual refresh, and
   // post-command polls) and never drifts from what the watch shows.
   updateGlance({ name: name, battery: battery, range: range, locked: locked,
-                 climateOn: climateOn, charging: charging });
+                 climateOn: climateOn, charging: charging, distKm: cfg.useKm });
 }
 
 // Build the one-line launcher glance subtitle from the values we just pushed to
@@ -220,7 +224,7 @@ function pushState(s, awake) {
 function buildGlanceSubtitle(v) {
   var parts = [];
   var head = v.battery + '%';
-  if (v.range > 0) head += ' · ' + v.range + ' mi';
+  if (v.range > 0) head += ' · ' + v.range + (v.distKm ? ' km' : ' mi');
   parts.push(head);
   if (v.charging === 2) parts.push('Charging');
   else if (v.charging === 3) parts.push('Charged');
@@ -407,6 +411,7 @@ Pebble.addEventListener('webviewclosed', function (e) {
   if (cfg.token)  localStorage.setItem('tessie_token', cfg.token);
   if (cfg.vin)    localStorage.setItem('tessie_vin', cfg.vin.trim().toUpperCase());
   localStorage.setItem('use_f', cfg.useFahrenheit ? '1' : '0');
+  localStorage.setItem('use_km', cfg.useKm ? '1' : '0');
   refreshState();
 });
 
@@ -437,13 +442,15 @@ function buildConfigHtml(cfg) {
     '<label>Vehicle VIN</label>' +
     '<input id="vin" type="text" value="' + (cfg.vin || '') + '" placeholder="5YJ3...">' +
     '<div class="row"><input id="usef" type="checkbox" ' + (cfg.useFahrenheit ? 'checked' : '') + '><span>Show temperatures in °F</span></div>' +
+    '<div class="row"><input id="usekm" type="checkbox" ' + (cfg.useKm ? 'checked' : '') + '><span>Show distance in km</span></div>' +
     '<button onclick="save()">Save</button>' +
     '</div><script>' +
     'function save(){' +
     'var t=document.getElementById("token").value;' +
     'var v=document.getElementById("vin").value;' +
     'var f=document.getElementById("usef").checked;' +
-    'var out={vin:v,useFahrenheit:f};' +
+    'var k=document.getElementById("usekm").checked;' +
+    'var out={vin:v,useFahrenheit:f,useKm:k};' +
     'if(t&&t.indexOf("•")===-1){out.token=t;}' + // only overwrite token if user typed a new one
     // Honor return_to when the platform supplies it (the emulator passes a
     // localhost capture URL); fall back to the pebblejs://close scheme that the
