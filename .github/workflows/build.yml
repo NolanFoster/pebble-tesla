@@ -19,14 +19,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # pebble-tool prompts interactively to opt in to analytics on first run.
-      # CI has no stdin, so the prompt throws EOFError and the build fails.
-      # Dropping a NO_TRACKING file in the SDK home opts out non-interactively.
-      - name: Disable Pebble SDK analytics prompt
+      # The image activates the SDK core for the in-image `pebble` user, but the
+      # job runs as root (so checkout can write the workspace). Root therefore
+      # has no SDK and pebble-tool would try to fetch "latest" from the dead
+      # official download server (DNS failure). So install the SDK core for root
+      # from the same community mirror the image uses. NO_TRACKING opts out of
+      # the interactive analytics prompt (no stdin in CI -> EOFError otherwise).
+      - name: Install Pebble SDK core for root
+        env:
+          # Matches PEBBLE_SDK_VERSION baked into rebble/pebble-sdk.
+          SDK_VERSION: '4.3'
+          SDK_URL: 'https://github.com/aveao/PebbleArchive/raw/master/SDKCores/sdk-core-4.3.tar.bz2'
         run: |
-          for d in "$HOME/.pebble-sdk" /github/home/.pebble-sdk /root/.pebble-sdk; do
-            mkdir -p "$d" && touch "$d/NO_TRACKING"
-          done
+          mkdir -p "$HOME/.pebble-sdk"
+          touch "$HOME/.pebble-sdk/NO_TRACKING"
+          yes | pebble sdk install "$SDK_URL"
+          pebble sdk activate "$SDK_VERSION"
 
       - name: pebble build
         run: pebble build
