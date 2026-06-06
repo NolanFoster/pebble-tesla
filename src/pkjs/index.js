@@ -142,6 +142,11 @@ function pushState(s, awake) {
   var name = s.display_name || vehicle.vehicle_name || '';
   name = Array.from(name).slice(0, 24).join('');
 
+  var battery = charge.battery_level != null ? charge.battery_level : 0;
+  var range = charge.battery_range != null ? Math.round(charge.battery_range) : 0;
+  var locked = !!vehicle.locked;
+  var climateOn = !!climate.is_climate_on;
+
   var insideC = Math.round(climate.inside_temp != null ? climate.inside_temp : 0);
   var targetC = Math.round(climate.driver_temp_setting != null
     ? climate.driver_temp_setting : cfg.lastTarget);
@@ -152,10 +157,10 @@ function pushState(s, awake) {
   function maybeF(c) { return cfg.useFahrenheit ? Math.round(c * 9 / 5 + 32) : c; }
 
   var dict = {
-    BATTERY:     charge.battery_level != null ? charge.battery_level : 0,
-    RANGE:       charge.battery_range != null ? Math.round(charge.battery_range) : 0,
-    LOCKED:      vehicle.locked ? 1 : 0,
-    CLIMATE_ON:  climate.is_climate_on ? 1 : 0,
+    BATTERY:     battery,
+    RANGE:       range,
+    LOCKED:      locked ? 1 : 0,
+    CLIMATE_ON:  climateOn ? 1 : 0,
     INSIDE_TEMP: maybeF(insideC),
     TARGET_TEMP: maybeF(targetC),
     ONLINE:      (s.state === 'online') ? 1 : 0,
@@ -169,6 +174,36 @@ function pushState(s, awake) {
   if (paint >= 0) dict.PAINT_COLOR = paint;
 
   sendToWatch(dict);
+
+  // Mirror the freshest read onto the launcher glance so battery/lock show under
+  // the app name without opening it. Driven from pushState so the glance updates
+  // on the same path as the in-app card (initial refresh, manual refresh, and
+  // post-command polls) and never drifts from what the watch shows.
+  updateGlance({ name: name, battery: battery, range: range, locked: locked, climateOn: climateOn });
+}
+
+// Build the one-line launcher glance subtitle from the values we just pushed to
+// the watch. Pure + exported so it's unit-testable like the other helpers.
+function buildGlanceSubtitle(v) {
+  var parts = [];
+  var head = v.battery + '%';
+  if (v.range > 0) head += ' · ' + v.range + ' mi';
+  parts.push(head);
+  parts.push(v.locked ? 'Locked' : 'Unlocked');
+  if (v.climateOn) parts.push('Climate on');
+  return parts.join(' · ');
+}
+
+// Publish (reload) the app's launcher glance. A single slice with no expiration
+// so it persists until the next reload. The icon is omitted so the launcher
+// falls back to the app's own icon. appGlanceReload arrived with the AppGlance
+// API (SDK 4.0); guard so older runtimes simply skip it.
+function updateGlance(v) {
+  if (typeof Pebble === 'undefined' || !Pebble.appGlanceReload) return;
+  var slice = { layout: { subtitleTemplateString: buildGlanceSubtitle(v) } };
+  Pebble.appGlanceReload([slice],
+    function () {},
+    function (e) { console.log('appGlanceReload failed: ' + JSON.stringify(e)); });
 }
 
 // After a command, the car's reported state can lag the change by a few seconds
@@ -368,6 +403,8 @@ if (typeof module !== 'undefined' && module.exports) {
     ensureAwake: ensureAwake,
     awakeCode: awakeCode,
     paintCode: paintCode,
-    buildConfigHtml: buildConfigHtml
+    buildConfigHtml: buildConfigHtml,
+    buildGlanceSubtitle: buildGlanceSubtitle,
+    updateGlance: updateGlance
   };
 }

@@ -28,6 +28,7 @@ function makePebble() {
       (listeners[ev] || []).forEach(function (cb) { cb(e); });
     },
     sendAppMessage: jest.fn(function (dict, ok, fail) { if (ok) ok(); }),
+    appGlanceReload: jest.fn(function (slices, ok, fail) { if (ok) ok(); }),
     openURL: jest.fn()
   };
 }
