@@ -45,6 +45,7 @@
     ],
     "resources": {
       "media": [
+        { "type": "bitmap", "name": "IMAGE_MENU_ICON",        "file": "images/menu_icon.png", "menuIcon": true },
         { "type": "bitmap", "name": "ICON_LOCKED",            "file": "images/locked.png" },
         { "type": "bitmap", "name": "ICON_UNLOCKED",          "file": "images/unlocked.png" },
         { "type": "bitmap", "name": "ICON_SETTINGS",          "file": "images/settings.png" },
