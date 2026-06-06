@@ -4,25 +4,27 @@
 Two outputs, both drawn from one supersampled sedan-silhouette path so they stay
 visually identical:
 
-  resources/images/menu_icon.png   25x25  white glyph, transparent bg
-                                          (the on-watch launcher icon; Pebble
-                                          recolors it, so it must be 1-color +
-                                          alpha)
-  store/icon.png                   144x144 white glyph on the Tesla-red accent,
+  resources/images/menu_icon.png   25x25  white car with a black outline,
+                                          transparent bg (the on-watch launcher
+                                          icon). The outline keeps the white glyph
+                                          visible on light launcher backgrounds.
+  store/icon.png                   144x144 same glyph on the Tesla-red accent,
                                           rounded square (app store listing icon)
 
 Keeping the generator in-tree mirrors tools/gen_icons.py: the icons are
 reproducible and tweakable without a binary editor. Run from the repo root:
 
-    python3 tools/gen_app_icon.py
+    python3 tools/gen_app_icon.py     # needs Pillow (uv run --with Pillow ...)
 """
 
+import math
 import os
 from PIL import Image, ImageDraw
 
 SS = 16                                    # supersample factor for smooth curves
 RED = (227, 25, 55, 255)                   # #E31937 — the app's Tesla-red accent
 WHITE = (255, 255, 255, 255)
+BLACK = (0, 0, 0, 255)
 CLEAR = (0, 0, 0, 0)
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
@@ -30,49 +32,62 @@ IMG_DIR = os.path.join(ROOT, "resources", "images")
 STORE_DIR = os.path.join(ROOT, "store")
 
 
-def draw_car(size, color):
-    """Return an RGBA image of a centered sedan silhouette in `color`.
-
-    Coordinates are fractions of `size` so the same path scales to any output.
-    The body + greenhouse are one filled path; two wheel wells are punched out
-    (transparent) and white wheels dropped in, so the car reads even at 25px.
-    """
-    B = size * SS
+def _render_car(B, color):
+    """Draw the sedan silhouette in `color` on a BxB transparent canvas."""
     img = Image.new("RGBA", (B, B), CLEAR)
     d = ImageDraw.Draw(img)
 
     def px(x, y):
         return (x * B, y * B)
 
-    # Body + greenhouse silhouette (side profile), drawn as one polygon with a
-    # rounded roofline. Points run clockwise from the lower-left.
+    # Body + greenhouse silhouette (side profile), one polygon with a rounded
+    # roofline. Points run clockwise from the lower-left.
     body = [
-        px(0.06, 0.66),   # lower front
-        px(0.10, 0.55),   # hood rise
-        px(0.30, 0.52),   # base of windshield
-        px(0.40, 0.36),   # roof front
-        px(0.62, 0.36),   # roof rear
-        px(0.72, 0.52),   # base of rear glass
-        px(0.92, 0.55),   # trunk
-        px(0.94, 0.66),   # lower rear
+        px(0.06, 0.66), px(0.10, 0.55), px(0.30, 0.52), px(0.40, 0.36),
+        px(0.62, 0.36), px(0.72, 0.52), px(0.92, 0.55), px(0.94, 0.66),
     ]
     d.polygon(body, fill=color)
-    # Round the belt line a touch with a rectangle so the bottom edge is flat.
     d.rectangle([px(0.06, 0.62)[0], px(0, 0.62)[1],
                  px(0.94, 0)[0], px(0, 0.70)[1]], fill=color)
 
-    # Wheel wells: punch transparent arches, then drop white wheels in.
+    # Wheel wells punched transparent, then white wheels dropped in.
     for cx in (0.30, 0.70):
         r = 0.115
-        cy = 0.70
-        well = [px(cx - r - 0.02, cy - r), px(cx + r + 0.02, cy + r + 0.04)]
-        d.ellipse(well, fill=CLEAR)
+        d.ellipse([px(cx - r - 0.02, 0.70 - r), px(cx + r + 0.02, 0.70 + r + 0.04)],
+                  fill=CLEAR)
     for cx in (0.30, 0.70):
         r = 0.085
-        cy = 0.71
-        d.ellipse([px(cx - r, cy - r), px(cx + r, cy + r)], fill=color)
+        d.ellipse([px(cx - r, 0.71 - r), px(cx + r, 0.71 + r)], fill=color)
 
-    return img.resize((size, size), Image.LANCZOS)
+    return img
+
+
+def _tint(layer, color):
+    """Recolor a layer to `color`, keeping its alpha (used for the outline)."""
+    out = Image.new("RGBA", layer.size, color)
+    out.putalpha(layer.split()[3])
+    return out
+
+
+def draw_car(size, fill, border_frac=0.0, border_color=BLACK):
+    """Sedan silhouette in `fill`, optionally ringed by a `border_frac` outline.
+
+    The outline is built by compositing black-tinted copies of the glyph offset
+    in a circle (a cheap, smooth stroke) and drawing the fill on top.
+    """
+    B = size * SS
+    base = _render_car(B, fill)
+    if border_frac > 0:
+        bw = border_frac * B
+        ring = Image.new("RGBA", (B, B), CLEAR)
+        edge = _tint(base, border_color)
+        for ang in range(0, 360, 15):
+            dx = int(round(bw * math.cos(math.radians(ang))))
+            dy = int(round(bw * math.sin(math.radians(ang))))
+            ring.alpha_composite(edge, (dx, dy))
+        ring.alpha_composite(base)   # fill on top of the outline
+        base = ring
+    return base.resize((size, size), Image.LANCZOS)
 
 
 def save(img, path):
@@ -81,18 +96,16 @@ def save(img, path):
 
 
 def main():
-    # On-watch launcher icon: white car, transparent background.
-    menu = draw_car(25, WHITE)
-    save(menu, os.path.join(IMG_DIR, "menu_icon.png"))
+    # On-watch launcher icon: white car + black outline, transparent background.
+    save(draw_car(25, WHITE, border_frac=0.07),
+         os.path.join(IMG_DIR, "menu_icon.png"))
 
-    # Store listing icon: white car on a red rounded square.
+    # Store listing icon: same glyph on a red rounded square.
     size = 144
     icon = Image.new("RGBA", (size, size), CLEAR)
     d = ImageDraw.Draw(icon)
-    radius = int(size * 0.22)
-    d.rounded_rectangle([0, 0, size - 1, size - 1], radius=radius, fill=RED)
-    car = draw_car(size, WHITE)
-    icon.alpha_composite(car)
+    d.rounded_rectangle([0, 0, size - 1, size - 1], radius=int(size * 0.22), fill=RED)
+    icon.alpha_composite(draw_car(size, WHITE, border_frac=0.05))
     save(icon, os.path.join(STORE_DIR, "icon.png"))
 
     print("wrote resources/images/menu_icon.png (25x25) and store/icon.png (144x144)")
