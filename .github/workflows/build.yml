@@ -2,17 +2,31 @@ name: Build
 
 on:
   push:
+    branches: [staging, main]
   pull_request:
   workflow_dispatch:
 
-# Builds the watchapp .pbw with the Rebble fork of the Pebble SDK.
-# This compiles for all targetPlatforms (basalt, chalk, diorite, emery) and
-# uploads the resulting bundle as a build artifact.
+# Only one build per ref at a time; a new push to the same branch/PR cancels the
+# in-flight run. Combined with the push branch filter above, a PR branch builds
+# once (via pull_request) instead of twice (push + pull_request).
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+# Builds the watchapp .pbw with the Rebble fork of the Pebble SDK. One job per
+# target platform (a matrix) so each shows up as its own check — a single
+# platform's compile failure is obvious at a glance. pebble build normally
+# compiles every platform in package.json, so each job first narrows
+# targetPlatforms to its one platform.
 
 jobs:
   build:
-    name: pebble build
+    name: build (${{ matrix.platform }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false   # don't cancel the other platforms when one fails
+      matrix:
+        platform: [basalt, chalk, diorite, emery]
     container:
       image: rebble/pebble-sdk:latest
       options: --user root
@@ -40,12 +54,18 @@ jobs:
           touch "$HOME/.pebble-sdk/NO_TRACKING" 2>/dev/null || true
           pebble sdk list
 
+      # pebble build compiles every platform in package.json; rewrite it to this
+      # job's single platform so a failure is attributable to that platform alone.
+      - name: Limit build to ${{ matrix.platform }}
+        run: |
+          node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json"));p.pebble.targetPlatforms=[process.argv[1]];fs.writeFileSync("package.json",JSON.stringify(p,null,2));' "${{ matrix.platform }}"
+
       - name: pebble build
         run: pebble build
 
-      - name: Upload .pbw
+      - name: Upload ${{ matrix.platform }} .pbw
         uses: actions/upload-artifact@v4
         with:
-          name: tesla-control-pbw
+          name: tesla-control-${{ matrix.platform }}
           path: build/*.pbw
           if-no-files-found: error
