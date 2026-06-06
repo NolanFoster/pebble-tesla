@@ -19,14 +19,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # pebble-tool prompts interactively to opt in to analytics on first run.
-      # CI has no stdin, so the prompt throws EOFError and the build fails.
-      # Dropping a NO_TRACKING file in the SDK home opts out non-interactively.
-      - name: Disable Pebble SDK analytics prompt
+      # The image has the SDK core installed+activated under /root/.pebble-sdk,
+      # but the job runs as root with GitHub's HOME=/github/home override, so the
+      # tool looks in the wrong place and falls back to downloading — which fails
+      # (dead official server; image's Python 2.7 cert bundle can't do GitHub TLS).
+      # So locate the .pebble-sdk that actually contains an SDK core and point
+      # $HOME/.pebble-sdk at it. The SDK virtualenv keeps its original absolute
+      # paths, so nothing needs relocating.
+      - name: Use the SDK core pre-installed in the image
+        shell: bash
         run: |
-          for d in "$HOME/.pebble-sdk" /github/home/.pebble-sdk /root/.pebble-sdk; do
-            mkdir -p "$d" && touch "$d/NO_TRACKING"
-          done
+          set -x
+          core="$(find / -maxdepth 8 -type d -name sdk-core 2>/dev/null | head -1)"
+          test -n "$core"                 # fail loudly if the image layout changed
+          sdk="${core%%/SDKs/*}"          # /root/.pebble-sdk/SDKs/4.3/sdk-core -> /root/.pebble-sdk
+          echo "SDK home: $sdk"
+          if [ "$sdk" != "$HOME/.pebble-sdk" ]; then
+            ln -sfn "$sdk" "$HOME/.pebble-sdk"
+          fi
+          touch "$HOME/.pebble-sdk/NO_TRACKING" 2>/dev/null || true
+          pebble sdk list
 
       - name: pebble build
         run: pebble build

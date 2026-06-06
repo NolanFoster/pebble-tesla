@@ -721,12 +721,11 @@ static void push_controls_window(void) {
 // AppMessage
 // ---------------------------------------------------------------------------
 static void send_command(TeslaCommand cmd, int arg) {
-  // Nothing can reach Tessie without the phone, so give immediate feedback
-  // rather than letting the send fail after a delay.
-  if (!s_connected) {
-    show_status("Phone offline", 2000);
-    return;
-  }
+  // The card footer flags a lost phone link (see connection_handler), but we no
+  // longer hard-block the send on s_connected: connection_service_peek can read
+  // "disconnected" while AppMessage actually still works, which would wrongly
+  // reject valid commands. Always attempt the send; if the link really is down,
+  // outbox_failed surfaces "Send failed".
   DictionaryIterator *it;
   AppMessageResult r = app_message_outbox_begin(&it);
   if (r != APP_MSG_OK) {

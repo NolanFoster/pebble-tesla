@@ -141,8 +141,14 @@ function refreshState() {
 }
 
 function refreshVehicleData(awake) {
-  // use_cache=false ensures we get a live read where possible
-  tessie('GET', '/state?use_cache=false', function (err, s) {
+  // A live read (use_cache=false) reaches out to the car, so it only works while
+  // the car is awake; on a sleeping car it stalls and Tessie returns 408. Only
+  // force a live read when /status says the car is awake — otherwise take
+  // Tessie's cached snapshot, which returns last-known values immediately
+  // without a timeout (and still drives the card + launcher glance). awake===1
+  // is AWAKE_AWAKE; asleep/waiting/unknown all fall back to the cached read.
+  var path = (awake === 1) ? '/state?use_cache=false' : '/state';
+  tessie('GET', path, function (err, s) {
     if (err) { sendError(err); return; }
     if (!s) { sendError('No state'); return; }
     pushState(s, awake);
@@ -246,7 +252,7 @@ function updateGlance(v) {
   if (typeof Pebble === 'undefined' || !Pebble.appGlanceReload) return;
   var slice = { layout: { icon: GLANCE_ICON, subtitleTemplateString: buildGlanceSubtitle(v) } };
   Pebble.appGlanceReload([slice],
-    function () {},
+    function () { console.log('appGlanceReload ok'); },
     function (e) { console.log('appGlanceReload failed: ' + JSON.stringify(e)); });
 }
 
