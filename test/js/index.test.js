@@ -31,7 +31,7 @@ afterEach(function () {
 describe('getConfig', function () {
   test('defaults when storage empty', function () {
     var m = load({});
-    expect(m.getConfig()).toEqual({ token: '', vin: '', useFahrenheit: false, lastTarget: 21 });
+    expect(m.getConfig()).toEqual({ token: '', vin: '', useFahrenheit: false, lastTarget: 21, lastLimit: 80 });
   });
 
   test('parses use_f and last_target', function () {
@@ -50,6 +50,20 @@ describe('awakeCode', function () {
     expect(m.awakeCode('waiting_for_sleep')).toBe(2);
     expect(m.awakeCode(undefined)).toBe(-1);
     expect(m.awakeCode('nonsense')).toBe(-1);
+  });
+});
+
+describe('chargeCode', function () {
+  test('maps Tessie charging_state strings to ChargeState codes', function () {
+    var m = load(CONFIGURED);
+    expect(m.chargeCode('Charging')).toBe(2);
+    expect(m.chargeCode('Starting')).toBe(2);     // about to charge
+    expect(m.chargeCode('Complete')).toBe(3);
+    expect(m.chargeCode('Stopped')).toBe(1);
+    expect(m.chargeCode('NoPower')).toBe(1);       // plugged, idle
+    expect(m.chargeCode('Disconnected')).toBe(0);
+    expect(m.chargeCode(undefined)).toBe(-1);
+    expect(m.chargeCode('nonsense')).toBe(-1);
   });
 });
 
@@ -219,7 +233,8 @@ describe('refreshState', function () {
     xhr.respond(200, STATE);
     expect(global.Pebble.sendAppMessage).toHaveBeenCalledWith({
       BATTERY: 84, RANGE: 240, LOCKED: 1, CLIMATE_ON: 1,
-      INSIDE_TEMP: 21, TARGET_TEMP: 22, ONLINE: 1, AWAKE: 1, NAME: 'Bumblebee'
+      INSIDE_TEMP: 21, TARGET_TEMP: 22, ONLINE: 1, AWAKE: 1, NAME: 'Bumblebee',
+      CHARGING: -1, CHARGE_LIMIT: -1, CHARGE_TIME: -1
     }, expect.any(Function), expect.any(Function));
     expect(global.localStorage.getItem('last_target')).toBe('22'); // stored in °C
   });
@@ -241,6 +256,39 @@ describe('refreshState', function () {
     global.XMLHttpRequest.last().respond(200, STATE); // no vehicle_config
     var dict = global.Pebble.sendAppMessage.mock.calls[0][0];
     expect('PAINT_COLOR' in dict).toBe(false);
+  });
+
+  test('forwards charging state, limit and minutes-to-full while charging', function () {
+    var m = load(CONFIGURED);
+    m.refreshState();
+    ackStatus('awake');
+    global.XMLHttpRequest.last().respond(200, Object.assign({}, STATE, {
+      charge_state: {
+        battery_level: 84, battery_range: 240.4,
+        charging_state: 'Charging', charge_limit_soc: 90, time_to_full_charge: 1.5
+      }
+    }));
+    var dict = global.Pebble.sendAppMessage.mock.calls[0][0];
+    expect(dict.CHARGING).toBe(2);
+    expect(dict.CHARGE_LIMIT).toBe(90);
+    expect(dict.CHARGE_TIME).toBe(90);             // 1.5h -> 90 min
+    expect(global.localStorage.getItem('last_limit')).toBe('90');
+  });
+
+  test('omits the charge ETA when not actively charging', function () {
+    var m = load(CONFIGURED);
+    m.refreshState();
+    ackStatus('awake');
+    global.XMLHttpRequest.last().respond(200, Object.assign({}, STATE, {
+      charge_state: {
+        battery_level: 84, battery_range: 240.4,
+        charging_state: 'Complete', charge_limit_soc: 80, time_to_full_charge: 0
+      }
+    }));
+    var dict = global.Pebble.sendAppMessage.mock.calls[0][0];
+    expect(dict.CHARGING).toBe(3);
+    expect(dict.CHARGE_LIMIT).toBe(80);
+    expect(dict.CHARGE_TIME).toBe(-1);
   });
 
   test('reports the awake status independent of the state read', function () {
@@ -342,6 +390,14 @@ describe('AppGlance', function () {
       expect(m.buildGlanceSubtitle({ battery: 50, range: 0, locked: false, climateOn: false }))
         .toBe('50% · Unlocked');
     });
+
+    test('shows Charging / Charged after the battery when plugged in', function () {
+      var m = load(CONFIGURED);
+      expect(m.buildGlanceSubtitle({ battery: 60, range: 180, locked: true, climateOn: false, charging: 2 }))
+        .toBe('60% · 180 mi · Charging · Locked');
+      expect(m.buildGlanceSubtitle({ battery: 80, range: 200, locked: true, climateOn: false, charging: 3 }))
+        .toBe('80% · 200 mi · Charged · Locked');
+    });
   });
 
   test('refresh reloads the glance from the same values pushed to the watch', function () {
@@ -403,6 +459,33 @@ describe('setTemperature', function () {
     xhr.respond(200, {});
     expect(global.Pebble.sendAppMessage).toHaveBeenCalledWith(
       { STATUS: 'Set 72°F' }, expect.any(Function), expect.any(Function)); // 22°C -> 72°F
+  });
+});
+
+describe('setChargeLimit', function () {
+  test('steps by 5% and clamps to [50,100]', function () {
+    var hi = load(Object.assign({ last_limit: '100' }, CONFIGURED));
+    hi.setChargeLimit(+5);
+    ackStatus('awake');
+    expect(global.XMLHttpRequest.last().url).toContain('/command/set_charge_limit?percent=100');
+    expect(global.localStorage.getItem('last_limit')).toBe('100');
+
+    var lo = load(Object.assign({ last_limit: '50' }, CONFIGURED));
+    lo.setChargeLimit(-5);
+    ackStatus('awake');
+    expect(global.XMLHttpRequest.last().url).toContain('percent=50');
+  });
+
+  test('increments from the stored limit and confirms to the watch', function () {
+    var m = load(Object.assign({ last_limit: '80' }, CONFIGURED));
+    m.setChargeLimit(+5);
+    ackStatus('awake');
+    var xhr = global.XMLHttpRequest.last();
+    expect(xhr.method).toBe('POST');
+    expect(xhr.url).toContain('/command/set_charge_limit?percent=85');
+    xhr.respond(200, {});
+    expect(global.Pebble.sendAppMessage).toHaveBeenCalledWith(
+      { STATUS: 'Limit 85%' }, expect.any(Function), expect.any(Function));
   });
 });
 
@@ -487,9 +570,13 @@ describe('handleCommand', function () {
     [7, '/command/activate_front_trunk'],
     [8, '/command/activate_rear_trunk'],
     [9, '/command/open_charge_port'],
+    [11, '/command/start_charging'],
+    [12, '/command/stop_charging'],
     [0, '/state?use_cache=false'],
     [5, '/command/set_temperatures?temperature='],
-    [6, '/command/set_temperatures?temperature=']
+    [6, '/command/set_temperatures?temperature='],
+    [13, '/command/set_charge_limit?percent='],
+    [14, '/command/set_charge_limit?percent=']
   ];
 
   cases.forEach(function (c) {

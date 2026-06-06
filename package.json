@@ -41,7 +41,10 @@
       "NAME",
       "ERROR",
       "TEMP_DELTA",
-      "PAINT_COLOR"
+      "PAINT_COLOR",
+      "CHARGING",
+      "CHARGE_LIMIT",
+      "CHARGE_TIME"
     ],
     "resources": {
       "media": [

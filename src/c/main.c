@@ -16,6 +16,9 @@
 #define KEY_ERROR        MESSAGE_KEY_ERROR
 #define KEY_TEMP_DELTA   MESSAGE_KEY_TEMP_DELTA
 #define KEY_PAINT_COLOR  MESSAGE_KEY_PAINT_COLOR
+#define KEY_CHARGING     MESSAGE_KEY_CHARGING
+#define KEY_CHARGE_LIMIT MESSAGE_KEY_CHARGE_LIMIT
+#define KEY_CHARGE_TIME  MESSAGE_KEY_CHARGE_TIME
 
 // ---- Command codes (TeslaCommand enum) come from logic.h ----
 
@@ -28,6 +31,9 @@ static int      s_inside_temp = 0;
 static int      s_target_temp = 0;
 static bool     s_online      = false;
 static int      s_awake       = AWAKE_UNKNOWN;
+static int      s_charging    = CHARGE_UNKNOWN;  // ChargeState
+static int      s_charge_limit = -1;             // target percent, <0 unknown
+static int      s_charge_eta  = -1;              // minutes to limit while charging
 static char     s_name[100]   = "";   // vehicle name (UTF-8; room for ~24 emoji)
 static char     s_error[64]   = "";
 static int      s_paint       = PAINT_UNKNOWN;  // exterior paint -> accent theme
@@ -127,7 +133,61 @@ static VehicleState current_state(void) {
     .inside_temp = s_inside_temp, .target_temp = s_target_temp,
     .locked = s_locked, .climate_on = s_climate_on, .online = s_online,
     .awake = s_awake,
+    .charging = s_charging, .charge_limit = s_charge_limit,
+    .charge_eta = s_charge_eta,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Persistent state cache
+//
+// The design guidelines recommend caching the last-loaded data so the card shows
+// known values immediately on launch (and during a Bluetooth/phone outage)
+// instead of dashes until the first round-trip completes. We snapshot the cached
+// globals into one versioned struct via persist_write_data; a version bump
+// invalidates an old layout rather than reading it back wrong.
+// ---------------------------------------------------------------------------
+#define PERSIST_KEY_STATE   1
+#define PERSIST_VERSION      2   // bump when the struct layout changes
+
+typedef struct {
+  int32_t version;
+  int32_t battery, range, inside_temp, target_temp, awake, paint;
+  int32_t charging, charge_limit, charge_eta;
+  uint8_t locked, climate_on, online;
+  char    name[100];
+} PersistState;
+
+static void save_state(void) {
+  PersistState p = {
+    .version = PERSIST_VERSION,
+    .battery = s_battery, .range = s_range,
+    .inside_temp = s_inside_temp, .target_temp = s_target_temp,
+    .awake = s_awake, .paint = s_paint,
+    .charging = s_charging, .charge_limit = s_charge_limit, .charge_eta = s_charge_eta,
+    .locked = s_locked, .climate_on = s_climate_on, .online = s_online,
+  };
+  strncpy(p.name, s_name, sizeof(p.name) - 1);
+  p.name[sizeof(p.name) - 1] = '\0';
+  persist_write_data(PERSIST_KEY_STATE, &p, sizeof(p));
+}
+
+// Populate the cached globals from the last saved snapshot (if any), so the
+// first paint shows real values. Returns whether a usable cache was loaded.
+static bool load_state(void) {
+  if (!persist_exists(PERSIST_KEY_STATE)) return false;
+  PersistState p;
+  int read = persist_read_data(PERSIST_KEY_STATE, &p, sizeof(p));
+  if (read != (int)sizeof(p) || p.version != PERSIST_VERSION) return false;
+  s_battery = p.battery; s_range = p.range;
+  s_inside_temp = p.inside_temp; s_target_temp = p.target_temp;
+  s_awake = p.awake; s_paint = p.paint;
+  s_charging = p.charging; s_charge_limit = p.charge_limit; s_charge_eta = p.charge_eta;
+  s_locked = p.locked; s_climate_on = p.climate_on; s_online = p.online;
+  strncpy(s_name, p.name, sizeof(s_name) - 1);
+  s_name[sizeof(s_name) - 1] = '\0';
+  s_anim_pct = s_battery;   // snap the gauge to the cached level (no sweep-up)
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -198,10 +258,19 @@ static void draw_battery_gauge(GContext *gctx, GRect box, const VehicleState *st
   if (pct > 100) pct = 100;
   const uint16_t thick = PBL_IF_ROUND_ELSE(8, 7);
   const int32_t end = TRIG_MAX_ANGLE * pct / 100;
+  // Charge-limit angle (a notch on the ring), used to draw a "pending" arc from
+  // the current level to the limit while charging and a tick at the target.
+  const int32_t lim_end = (st->charge_limit > 0 && st->charge_limit <= 100)
+    ? TRIG_MAX_ANGLE * st->charge_limit / 100 : -1;
 
 #if defined(PBL_COLOR)
+  const bool charging = (st->charging == CHARGE_CHARGING);
   graphics_context_set_fill_color(gctx, GColorDarkGray);                  // track
   graphics_fill_radial(gctx, box, GOvalScaleModeFitCircle, thick, 0, TRIG_MAX_ANGLE);
+  if (charging && lim_end > end) {                                        // pending → limit
+    graphics_context_set_fill_color(gctx, GColorMintGreen);
+    graphics_fill_radial(gctx, box, GOvalScaleModeFitCircle, thick, end, lim_end);
+  }
   graphics_context_set_fill_color(gctx, battery_arc_color(st->battery));  // charge
   graphics_fill_radial(gctx, box, GOvalScaleModeFitCircle, thick, 0, end);
 #else
@@ -211,6 +280,17 @@ static void draw_battery_gauge(GContext *gctx, GRect box, const VehicleState *st
   graphics_fill_radial(gctx, box, GOvalScaleModeFitCircle, 2, 0, TRIG_MAX_ANGLE);
   graphics_fill_radial(gctx, box, GOvalScaleModeFitCircle, thick, 0, end);
 #endif
+
+  // Charge-limit tick: a short notch poking inward at the target angle, so the
+  // limit is legible whether or not the car is currently charging. Skipped at
+  // 100% (it would sit on the 12-o'clock start) and when the limit is unknown.
+  if (lim_end >= 0 && st->charge_limit < 100) {
+    const int32_t tickw = TRIG_MAX_ANGLE / 90;        // ~2° wide
+    int32_t a0 = lim_end - tickw; if (a0 < 0) a0 = 0;
+    int32_t a1 = lim_end + tickw; if (a1 > TRIG_MAX_ANGLE) a1 = TRIG_MAX_ANGLE;
+    graphics_context_set_fill_color(gctx, PBL_IF_COLOR_ELSE(GColorWhite, GColorBlack));
+    graphics_fill_radial(gctx, box, GOvalScaleModeFitCircle, thick + 3, a0, a1);
+  }
 
   // Percentage hero, centered. The LECO numbers font scales with the ring so it
   // never collides with the arc; an unknown reading uses a GOTHIC em-dash (LECO
@@ -379,10 +459,18 @@ static void card_update_proc(Layer *layer, GContext *gctx) {
     st.climate_on, line, f_body);
   y += pitch;
 
-  // Power/awake (small, footer) — rectangular displays only; round has no room.
+  // Footer (small) — rectangular displays only; round has no room. While the car
+  // is charging (or done), the charge status is the more useful line, so it
+  // replaces the awake/power state there. Charging is tinted green to draw the eye.
 #if !defined(PBL_ROUND)
-  graphics_context_set_text_color(gctx, fg);
-  fmt_power_subtitle(&st, line, sizeof(line));
+  if (charge_show_status(&st)) {
+    fmt_charge_subtitle(&st, line, sizeof(line));
+    graphics_context_set_text_color(gctx,
+      PBL_IF_COLOR_ELSE(st.charging == CHARGE_CHARGING ? GColorGreen : fg, GColorBlack));
+  } else {
+    fmt_power_subtitle(&st, line, sizeof(line));
+    graphics_context_set_text_color(gctx, fg);
+  }
   graphics_draw_text(gctx, line, fonts_get_system_font(FONT_KEY_GOTHIC_14),
     GRect(content.origin.x, y, content.size.w, 18),
     GTextOverflowModeTrailingEllipsis, align, NULL);
@@ -514,6 +602,9 @@ static GBitmap *mc_icon(ControlsRow row, bool dark) {
     case CTRL_ROW_FRUNK:       return dark ? s_icon_frunk_d     : s_icon_frunk;
     case CTRL_ROW_TRUNK:       return dark ? s_icon_trunk_d     : s_icon_trunk;
     case CTRL_ROW_CHARGE_PORT: return dark ? s_icon_charge_d    : s_icon_charge;
+    case CTRL_ROW_CHARGE:      return dark ? s_icon_charge_d    : s_icon_charge;
+    case CTRL_ROW_LIMIT_UP:    return NULL;
+    case CTRL_ROW_LIMIT_DOWN:  return NULL;
     case CTRL_ROW_REFRESH:     return dark ? s_icon_refresh_d   : s_icon_refresh;
   }
   return NULL;
@@ -535,7 +626,11 @@ static void mc_draw_row(GContext *gctx, const Layer *cell, MenuIndex *idx, void 
   int n = mc_rows(rows);
   if (idx->row >= n) { menu_cell_basic_draw(gctx, cell, "", NULL, NULL); return; }
   ControlsRow row = rows[idx->row];
-  menu_cell_basic_draw(gctx, cell, controls_row_label(row), NULL, mc_icon(row, dark));
+  // The charge row is a state-aware toggle, so its label flips Start/Stop.
+  VehicleState st = current_state();
+  const char *label = (row == CTRL_ROW_CHARGE) ? charge_toggle_label(&st)
+                                               : controls_row_label(row);
+  menu_cell_basic_draw(gctx, cell, label, NULL, mc_icon(row, dark));
 }
 
 // Transient "…ing" overlay shown after a row is selected.
@@ -547,6 +642,9 @@ static const char *mc_status(ControlsRow row) {
     case CTRL_ROW_FRUNK:       return "Opening frunk…";
     case CTRL_ROW_TRUNK:       return "Opening trunk…";
     case CTRL_ROW_CHARGE_PORT: return "Charge port…";
+    case CTRL_ROW_CHARGE:      return "Charging…";   // dynamic; see mc_select
+    case CTRL_ROW_LIMIT_UP:    return "Limit +5%…";
+    case CTRL_ROW_LIMIT_DOWN:  return "Limit -5%…";
     case CTRL_ROW_REFRESH:     return "Refreshing…";
   }
   return "…";
@@ -557,6 +655,13 @@ static void mc_select(MenuLayer *ml, MenuIndex *idx, void *ctx) {
   int n = mc_rows(rows);
   if (idx->row >= n) return;
   ControlsRow row = rows[idx->row];
+  VehicleState st = current_state();
+  // The charge row toggles Start/Stop based on the current charging state.
+  if (row == CTRL_ROW_CHARGE) {
+    send_command((TeslaCommand)charge_toggle_cmd(&st), 0);
+    show_status(st.charging == CHARGE_CHARGING ? "Stopping…" : "Starting…", 0);
+    return;
+  }
   // send_command attaches TEMP_DELTA only for temp rows; a 0 delta is ignored.
   send_command((TeslaCommand)controls_row_cmd(row), controls_row_temp_delta(row));
   show_status(mc_status(row), 0);
@@ -634,11 +739,14 @@ static void inbox_received(DictionaryIterator *it, void *ctx) {
     strncpy(s_error, t->value->cstring, sizeof(s_error) - 1);
     s_error[sizeof(s_error) - 1] = '\0';
     show_status(s_error, 2500);
+    vibes_long_pulse();                 // a longer buzz flags something needing attention
     return;
   }
   if ((t = dict_find(it, KEY_STATUS))) {
-    // A short human string confirming a command landed
+    // A short human string confirming a command landed. A confirmation (not an
+    // in-progress "…ing" message) earns a short success buzz.
     show_status(t->value->cstring, 1500);
+    if (status_is_confirmation(t->value->cstring)) vibes_short_pulse();
   }
   if ((t = dict_find(it, KEY_BATTERY)))     { s_battery = t->value->int32; got_state = true;
                                               animate_battery_to(s_battery); }
@@ -659,8 +767,12 @@ static void inbox_received(DictionaryIterator *it, void *ctx) {
     if (paint != s_paint) { s_paint = paint; apply_theme(); }
     got_state = true;
   }
+  if ((t = dict_find(it, KEY_CHARGING)))     { s_charging = t->value->int32; got_state = true; }
+  if ((t = dict_find(it, KEY_CHARGE_LIMIT))) { s_charge_limit = t->value->int32; got_state = true; }
+  if ((t = dict_find(it, KEY_CHARGE_TIME)))  { s_charge_eta = t->value->int32; got_state = true; }
 
   if (got_state) {
+    save_state();                                     // cache for the next cold launch
     if (s_card_layer) layer_mark_dirty(s_card_layer);
     update_action_bar_icons();                        // lock/climate glyph follows state
     if (s_controls_menu) menu_layer_reload_data(s_controls_menu);
@@ -674,10 +786,12 @@ static void inbox_received(DictionaryIterator *it, void *ctx) {
 
 static void inbox_dropped(AppMessageResult reason, void *ctx) {
   show_status("Msg dropped", 1500);
+  vibes_long_pulse();
 }
 
 static void outbox_failed(DictionaryIterator *it, AppMessageResult reason, void *ctx) {
   show_status("Send failed", 1500);
+  vibes_long_pulse();
 }
 
 static void outbox_sent(DictionaryIterator *it, void *ctx) {
@@ -768,6 +882,7 @@ static void main_window_unload(Window *w) {
 
 static void init(void) {
   load_icons();
+  load_state();   // show last-known values immediately, before the first refresh
 
   s_main_window = window_create();
   window_set_window_handlers(s_main_window, (WindowHandlers){

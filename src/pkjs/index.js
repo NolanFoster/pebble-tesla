@@ -12,7 +12,9 @@ var CMD = {
   CLIMATE_ON: 3, CLIMATE_OFF: 4,
   TEMP_UP: 5, TEMP_DOWN: 6,
   FRUNK: 7, TRUNK: 8, CHARGE_PORT: 9,
-  WAKE: 10
+  WAKE: 10,
+  CHARGE_START: 11, CHARGE_STOP: 12,
+  LIMIT_UP: 13, LIMIT_DOWN: 14
 };
 
 var API_BASE = 'https://api.tessie.com';
@@ -28,7 +30,8 @@ function getConfig() {
     token: localStorage.getItem('tessie_token') || '',
     vin: localStorage.getItem('tessie_vin') || '',
     useFahrenheit: localStorage.getItem('use_f') === '1',
-    lastTarget: parseInt(localStorage.getItem('last_target') || '21', 10) // °C
+    lastTarget: parseInt(localStorage.getItem('last_target') || '21', 10), // °C
+    lastLimit: parseInt(localStorage.getItem('last_limit') || '80', 10)    // charge %
   };
 }
 
@@ -78,6 +81,22 @@ function awakeCode(status) {
     case 'asleep':            return 0;  // AWAKE_ASLEEP
     case 'waiting_for_sleep': return 2;  // AWAKE_WAITING
     default:                  return -1; // AWAKE_UNKNOWN
+  }
+}
+
+// Map Tessie charge_state.charging_state onto a ChargeState code (must match the
+// ChargeState enum in logic.h). "Connected but idle" (Stopped/NoPower) and
+// "Complete" both mean the cable is plugged in, which is what gates the Start/Stop
+// control on the watch.
+function chargeCode(status) {
+  switch (status) {
+    case 'Charging':     return 2;  // CHARGE_CHARGING
+    case 'Starting':     return 2;  // about to charge -> treat as charging
+    case 'Complete':     return 3;  // CHARGE_COMPLETE
+    case 'Stopped':      return 1;  // CHARGE_STOPPED (plugged, idle)
+    case 'NoPower':      return 1;  // plugged but no power -> idle
+    case 'Disconnected': return 0;  // CHARGE_DISCONNECTED
+    default:             return -1; // CHARGE_UNKNOWN
   }
 }
 
@@ -154,18 +173,31 @@ function pushState(s, awake) {
   // remember target so +/- has a base even before next refresh
   localStorage.setItem('last_target', String(targetC));
 
+  // Charging: state code, target limit, and (while charging) minutes to the
+  // limit. Tessie's time_to_full_charge is in hours; convert to whole minutes.
+  var charging = chargeCode(charge.charging_state);
+  var chargeLimit = charge.charge_limit_soc != null ? charge.charge_limit_soc : -1;
+  if (chargeLimit >= 0) localStorage.setItem('last_limit', String(chargeLimit));
+  var chargeTime = -1;
+  if (charging === 2 && charge.time_to_full_charge > 0) {
+    chargeTime = Math.round(charge.time_to_full_charge * 60);
+  }
+
   function maybeF(c) { return cfg.useFahrenheit ? Math.round(c * 9 / 5 + 32) : c; }
 
   var dict = {
-    BATTERY:     battery,
-    RANGE:       range,
-    LOCKED:      locked ? 1 : 0,
-    CLIMATE_ON:  climateOn ? 1 : 0,
-    INSIDE_TEMP: maybeF(insideC),
-    TARGET_TEMP: maybeF(targetC),
-    ONLINE:      (s.state === 'online') ? 1 : 0,
-    AWAKE:       awake,
-    NAME:        name
+    BATTERY:      battery,
+    RANGE:        range,
+    LOCKED:       locked ? 1 : 0,
+    CLIMATE_ON:   climateOn ? 1 : 0,
+    INSIDE_TEMP:  maybeF(insideC),
+    TARGET_TEMP:  maybeF(targetC),
+    ONLINE:       (s.state === 'online') ? 1 : 0,
+    AWAKE:        awake,
+    NAME:         name,
+    CHARGING:     charging,
+    CHARGE_LIMIT: chargeLimit,
+    CHARGE_TIME:  chargeTime
   };
 
   // Only send the paint color when we can identify it, so the watch keeps its
@@ -179,7 +211,8 @@ function pushState(s, awake) {
   // the app name without opening it. Driven from pushState so the glance updates
   // on the same path as the in-app card (initial refresh, manual refresh, and
   // post-command polls) and never drifts from what the watch shows.
-  updateGlance({ name: name, battery: battery, range: range, locked: locked, climateOn: climateOn });
+  updateGlance({ name: name, battery: battery, range: range, locked: locked,
+                 climateOn: climateOn, charging: charging });
 }
 
 // Build the one-line launcher glance subtitle from the values we just pushed to
@@ -189,6 +222,8 @@ function buildGlanceSubtitle(v) {
   var head = v.battery + '%';
   if (v.range > 0) head += ' · ' + v.range + ' mi';
   parts.push(head);
+  if (v.charging === 2) parts.push('Charging');
+  else if (v.charging === 3) parts.push('Charged');
   parts.push(v.locked ? 'Locked' : 'Unlocked');
   if (v.climateOn) parts.push('Climate on');
   return parts.join(' · ');
@@ -232,6 +267,7 @@ function refreshAfterCommand(isSettled, readsLeft) {
 // Predicates describing the state a command is expected to produce.
 function isLocked(s)    { return !!(s.vehicle_state && s.vehicle_state.locked); }
 function isClimateOn(s) { return !!(s.climate_state && s.climate_state.is_climate_on); }
+function isCharging(s)  { return !!(s.charge_state && s.charge_state.charging_state === 'Charging'); }
 
 // ---- Command dispatch ----
 // Tesla commands only succeed when the car is awake. Check status; if it isn't
@@ -289,6 +325,27 @@ function setTemperature(deltaC) {
   });
 }
 
+// Charge limit is nudged in 5% steps and clamped to [50,100] (Tesla's daily
+// range). The current limit is tracked in localStorage (refreshed from each
+// /state read) so +/- has a base before the next refresh, mirroring setTemperature.
+function setChargeLimit(deltaPct) {
+  var cfg = getConfig();
+  var next = Math.max(50, Math.min(100, cfg.lastLimit + deltaPct));
+  localStorage.setItem('last_limit', String(next));
+  ensureAwake(function () {
+    tessie('POST', '/command/set_charge_limit?percent=' + next, function (err, data) {
+      if (err) { sendError(err); return; }
+      if (data && data.result === false) { sendError('Command rejected'); return; }
+      sendToWatch({ STATUS: 'Limit ' + next + '%' });
+      setTimeout(function () {
+        refreshAfterCommand(function (s) {
+          return s.charge_state && s.charge_state.charge_limit_soc === next;
+        }, REFRESH_MAX_READS);
+      }, REFRESH_FIRST_MS);
+    });
+  });
+}
+
 // Explicit user-initiated wake (the "Wake" controls row). Unlike ensureAwake,
 // this is the whole action: POST /wake, then refresh so the watch reflects the
 // new power state (and the Wake row drops off the controls menu).
@@ -313,6 +370,10 @@ function handleCommand(code) {
     case CMD.FRUNK:       doCommand('/command/activate_front_trunk', 'Frunk'); break;
     case CMD.TRUNK:       doCommand('/command/activate_rear_trunk', 'Trunk'); break;
     case CMD.CHARGE_PORT: doCommand('/command/open_charge_port', 'Charge port'); break;
+    case CMD.CHARGE_START: doCommand('/command/start_charging', 'Charging', isCharging); break;
+    case CMD.CHARGE_STOP:  doCommand('/command/stop_charging', 'Charge stopped', function (s) { return !isCharging(s); }); break;
+    case CMD.LIMIT_UP:    setChargeLimit(+5); break;
+    case CMD.LIMIT_DOWN:  setChargeLimit(-5); break;
     case CMD.TEMP_UP:     setTemperature(+1); break;
     case CMD.TEMP_DOWN:   setTemperature(-1); break;
     default: sendError('Unknown cmd ' + code);
@@ -404,9 +465,11 @@ if (typeof module !== 'undefined' && module.exports) {
     refreshState: refreshState,
     doCommand: doCommand,
     setTemperature: setTemperature,
+    setChargeLimit: setChargeLimit,
     handleCommand: handleCommand,
     ensureAwake: ensureAwake,
     awakeCode: awakeCode,
+    chargeCode: chargeCode,
     paintCode: paintCode,
     buildConfigHtml: buildConfigHtml,
     buildGlanceSubtitle: buildGlanceSubtitle,

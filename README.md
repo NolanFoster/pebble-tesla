@@ -69,13 +69,21 @@ saved.
 - **Status card:** vehicle name, battery + range, doors (lock state), climate,
   and power (awake / asleep / waiting for sleep). The awake state comes from
   Tessie's `GET /{vin}/status`; refreshing never wakes the car.
+  - The **battery ring** also shows the **charge limit** as a small tick and,
+    while charging, a softer green "pending" arc from the current level up to the
+    limit. When the car is charging (or done) the footer shows **Charging ·
+    1h20m** / **Charge complete** instead of the awake state.
 - **Action bar buttons:**
   - **Up** — Lock / Unlock. The icon reflects current state (closed padlock when
     locked, open when unlocked).
   - **Select** — More Controls: Temp ±1°, Open Frunk, Open Trunk, Charge Port,
-    Refresh. Back returns to the card.
+    Start/Stop Charging (only when plugged in), Charge Limit ±5%, Refresh. Back
+    returns to the card.
   - **Down** — Climate On / Off. The icon reflects current state (fan on/off).
-- A short overlay shows "Locking…", then the result, then auto-dismisses.
+- A short overlay shows "Locking…", then the result, then auto-dismisses. Results
+  also give **haptic feedback** — a short buzz on success, a longer one on error.
+- Cached state is saved on the watch, so a cold launch shows the **last-known**
+  values immediately (rather than dashes) while the first refresh is in flight.
 - On color watches (basalt/emery) the action bar uses a Tesla-red accent with
   white icons; diorite falls back to black/white.
 - **Launcher glance:** the phone publishes an AppGlance so the car's latest
@@ -96,10 +104,13 @@ saved.
 - **Temperature** is tracked in °C internally (Tessie's `set_temperatures` takes
   Celsius) and clamped to 15–28°C. The ±1° buttons step from the last known
   target; a refresh re-syncs it to the car's actual setting.
+- **Charge limit** works the same way: tracked locally, nudged in 5% steps,
+  clamped to 50–100%, and re-synced from the car on each refresh. Start/Stop
+  Charging only appears in More Controls when the car is plugged in.
 - **Endpoints used:** `GET /{vin}/status`, `GET /{vin}/state`,
   `POST /{vin}/wake`, `POST /{vin}/command/{lock|unlock|start_climate|
   stop_climate|set_temperatures|activate_front_trunk|activate_rear_trunk|
-  open_charge_port}`.
+  open_charge_port|start_charging|stop_charging|set_charge_limit}`.
 - **Security:** anyone with physical access to your unlocked phone could open
   the settings page, but the saved token is masked. Consider a Tessie token
   scoped to only the commands you need if Tessie offers scoping.
