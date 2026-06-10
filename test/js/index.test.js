@@ -31,7 +31,7 @@ afterEach(function () {
 describe('getConfig', function () {
   test('defaults when storage empty', function () {
     var m = load({});
-    expect(m.getConfig()).toEqual({ token: '', vin: '', useFahrenheit: false, useKm: false, lastTarget: 21, lastLimit: 80 });
+    expect(m.getConfig()).toEqual({ token: '', vin: '', useFahrenheit: false, useKm: false, showClock: true, lastTarget: 21, lastLimit: 80 });
   });
 
   test('parses use_f and last_target', function () {
@@ -234,7 +234,7 @@ describe('refreshState', function () {
     expect(global.Pebble.sendAppMessage).toHaveBeenCalledWith({
       BATTERY: 84, RANGE: 240, LOCKED: 1, CLIMATE_ON: 1,
       INSIDE_TEMP: 21, TARGET_TEMP: 22, ONLINE: 1, AWAKE: 1, NAME: 'Bumblebee',
-      CHARGING: -1, CHARGE_LIMIT: -1, CHARGE_TIME: -1, DIST_UNIT: 0
+      CHARGING: -1, CHARGE_LIMIT: -1, CHARGE_TIME: -1, DIST_UNIT: 0, SHOW_CLOCK: 1
     }, expect.any(Function), expect.any(Function));
     expect(global.localStorage.getItem('last_target')).toBe('22'); // stored in °C
   });
@@ -356,6 +356,16 @@ describe('refreshState', function () {
     var dict = global.Pebble.sendAppMessage.mock.calls[0][0];
     expect(dict.RANGE).toBe(387);     // round(240.4 * 1.609344)
     expect(dict.DIST_UNIT).toBe(1);
+  });
+
+  test('clears the clock flag when the user turns it off', function () {
+    var m = load(Object.assign({ show_clock: '0' }, CONFIGURED));
+    expect(m.getConfig().showClock).toBe(false);
+    m.refreshState();
+    ackStatus('awake');
+    global.XMLHttpRequest.last().respond(200, STATE);
+    var dict = global.Pebble.sendAppMessage.mock.calls[0][0];
+    expect(dict.SHOW_CLOCK).toBe(0);
   });
 
   test('sends the vehicle name, preferring display_name', function () {

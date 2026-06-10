@@ -45,7 +45,8 @@
       "CHARGING",
       "CHARGE_LIMIT",
       "CHARGE_TIME",
-      "DIST_UNIT"
+      "DIST_UNIT",
+      "SHOW_CLOCK"
     ],
     "resources": {
       "media": [

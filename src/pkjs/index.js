@@ -31,6 +31,7 @@ function getConfig() {
     vin: localStorage.getItem('tessie_vin') || '',
     useFahrenheit: localStorage.getItem('use_f') === '1',
     useKm: localStorage.getItem('use_km') === '1',
+    showClock: localStorage.getItem('show_clock') !== '0', // default on (absent → shown)
     lastTarget: parseInt(localStorage.getItem('last_target') || '21', 10), // °C
     lastLimit: parseInt(localStorage.getItem('last_limit') || '80', 10)    // charge %
   };
@@ -207,7 +208,8 @@ function pushState(s, awake) {
     CHARGING:     charging,
     CHARGE_LIMIT: chargeLimit,
     CHARGE_TIME:  chargeTime,
-    DIST_UNIT:    cfg.useKm ? 1 : 0
+    DIST_UNIT:    cfg.useKm ? 1 : 0,
+    SHOW_CLOCK:   cfg.showClock ? 1 : 0
   };
 
   // Only send the paint color when we can identify it, so the watch keeps its
@@ -418,6 +420,7 @@ Pebble.addEventListener('webviewclosed', function (e) {
   if (cfg.vin)    localStorage.setItem('tessie_vin', cfg.vin.trim().toUpperCase());
   localStorage.setItem('use_f', cfg.useFahrenheit ? '1' : '0');
   localStorage.setItem('use_km', cfg.useKm ? '1' : '0');
+  localStorage.setItem('show_clock', cfg.showClock ? '1' : '0');
   refreshState();
 });
 
@@ -449,6 +452,7 @@ function buildConfigHtml(cfg) {
     '<input id="vin" type="text" value="' + (cfg.vin || '') + '" placeholder="5YJ3...">' +
     '<div class="row"><input id="usef" type="checkbox" ' + (cfg.useFahrenheit ? 'checked' : '') + '><span>Show temperatures in °F</span></div>' +
     '<div class="row"><input id="usekm" type="checkbox" ' + (cfg.useKm ? 'checked' : '') + '><span>Show distance in km</span></div>' +
+    '<div class="row"><input id="showclock" type="checkbox" ' + (cfg.showClock ? 'checked' : '') + '><span>Show clock on screen</span></div>' +
     '<button onclick="save()">Save</button>' +
     '</div><script>' +
     'function save(){' +
@@ -456,7 +460,8 @@ function buildConfigHtml(cfg) {
     'var v=document.getElementById("vin").value;' +
     'var f=document.getElementById("usef").checked;' +
     'var k=document.getElementById("usekm").checked;' +
-    'var out={vin:v,useFahrenheit:f,useKm:k};' +
+    'var c=document.getElementById("showclock").checked;' +
+    'var out={vin:v,useFahrenheit:f,useKm:k,showClock:c};' +
     'if(t&&t.indexOf("•")===-1){out.token=t;}' + // only overwrite token if user typed a new one
     // Honor return_to when the platform supplies it (the emulator passes a
     // localhost capture URL); fall back to the pebblejs://close scheme that the
