@@ -20,6 +20,7 @@
 #define KEY_CHARGE_LIMIT MESSAGE_KEY_CHARGE_LIMIT
 #define KEY_CHARGE_TIME  MESSAGE_KEY_CHARGE_TIME
 #define KEY_DIST_UNIT    MESSAGE_KEY_DIST_UNIT
+#define KEY_SHOW_CLOCK   MESSAGE_KEY_SHOW_CLOCK
 
 // ---- Command codes (TeslaCommand enum) come from logic.h ----
 
@@ -36,6 +37,7 @@ static int      s_charging    = CHARGE_UNKNOWN;  // ChargeState
 static int      s_charge_limit = -1;             // target percent, <0 unknown
 static int      s_charge_eta  = -1;              // minutes to limit while charging
 static bool     s_dist_km     = false;           // render range in km (else miles)
+static bool     s_show_clock  = true;            // show the current time atop the card
 static bool     s_connected   = true;            // phone (PebbleKit JS) reachable
 static char     s_name[100]   = "";   // vehicle name (UTF-8; room for ~24 emoji)
 static char     s_error[64]   = "";
@@ -78,6 +80,7 @@ static void send_command(TeslaCommand cmd, int arg);
 static void update_action_bar_icons(void);
 static void push_controls_window(void);
 static void apply_theme(void);
+static void update_clock_subscription(void);
 
 // ---------------------------------------------------------------------------
 // Transient status overlay
@@ -151,13 +154,13 @@ static VehicleState current_state(void) {
 // invalidates an old layout rather than reading it back wrong.
 // ---------------------------------------------------------------------------
 #define PERSIST_KEY_STATE   1
-#define PERSIST_VERSION      3   // bump when the struct layout changes
+#define PERSIST_VERSION      4   // bump when the struct layout changes
 
 typedef struct {
   int32_t version;
   int32_t battery, range, inside_temp, target_temp, awake, paint;
   int32_t charging, charge_limit, charge_eta;
-  uint8_t locked, climate_on, online, dist_km;
+  uint8_t locked, climate_on, online, dist_km, show_clock;
   char    name[100];
 } PersistState;
 
@@ -169,7 +172,7 @@ static void save_state(void) {
     .awake = s_awake, .paint = s_paint,
     .charging = s_charging, .charge_limit = s_charge_limit, .charge_eta = s_charge_eta,
     .locked = s_locked, .climate_on = s_climate_on, .online = s_online,
-    .dist_km = s_dist_km,
+    .dist_km = s_dist_km, .show_clock = s_show_clock,
   };
   strncpy(p.name, s_name, sizeof(p.name) - 1);
   p.name[sizeof(p.name) - 1] = '\0';
@@ -188,7 +191,7 @@ static bool load_state(void) {
   s_awake = p.awake; s_paint = p.paint;
   s_charging = p.charging; s_charge_limit = p.charge_limit; s_charge_eta = p.charge_eta;
   s_locked = p.locked; s_climate_on = p.climate_on; s_online = p.online;
-  s_dist_km = p.dist_km;
+  s_dist_km = p.dist_km; s_show_clock = p.show_clock;
   strncpy(s_name, p.name, sizeof(s_name) - 1);
   s_name[sizeof(s_name) - 1] = '\0';
   s_anim_pct = s_battery;   // snap the gauge to the cached level (no sweep-up)
@@ -404,16 +407,40 @@ static void card_update_proc(Layer *layer, GContext *gctx) {
   const int16_t bot = PBL_IF_ROUND_ELSE(20, 4);
   const int16_t avail = content.size.h - bot;                // usable bottom edge offset
   const int16_t name_slot = 28, range_slot = 18;
-  const int16_t orn_slot = PBL_IF_ROUND_ELSE(0, 8);  // no ornament on the cramped circle
+  // A glanceable clock atop the card (optional). When shown it claims its own
+  // slot; the battery hero flexes below to absorb it where there's slack (emery).
+  // On the short 168px screens the hero is already pinned to its floor, so we
+  // also drop the decorative ornament band (below) to fund the clock's row
+  // rather than push the footer off-screen.
+  const int16_t clock_slot = s_show_clock ? 20 : 0;
+  const int16_t orn_slot = PBL_IF_ROUND_ELSE(0, s_show_clock ? 0 : 8);  // no ornament on the cramped circle
   const int16_t rows_reserve = PBL_IF_ROUND_ELSE(34, 56);
   const int      n_rows = PBL_IF_ROUND_ELSE(2, 3);
-  int16_t diam = avail - y0 - name_slot - range_slot - orn_slot - rows_reserve;
+  int16_t diam = avail - y0 - clock_slot - name_slot - range_slot - orn_slot - rows_reserve;
   const int16_t dmax = PBL_IF_ROUND_ELSE(96, 110);
   if (diam > content.size.w - 8) diam = content.size.w - 8;  // never overflow narrow cards
   if (diam > dmax) diam = dmax;
   if (diam < 54) diam = 54;                                  // keep room for the LECO number
 
   int16_t y = y0;
+
+  // Current time, so the clock stays glanceable while the app is left open.
+  // Read straight from the watch (no phone needed); a MINUTE_UNIT tick redraws
+  // the card. Follows the watch's 12h/24h system setting.
+  if (s_show_clock) {
+    char tbuf[8];
+    time_t now = time(NULL);
+    struct tm *lt = localtime(&now);
+    bool h24 = clock_is_24h_style();
+    strftime(tbuf, sizeof(tbuf), h24 ? "%H:%M" : "%I:%M", lt);
+    char *tstr = tbuf;
+    if (!h24 && tbuf[0] == '0') tstr++;  // "09:41" -> "9:41"
+    graphics_context_set_text_color(gctx, fg);
+    graphics_draw_text(gctx, tstr, f_body,
+      GRect(content.origin.x, y, content.size.w, clock_slot),
+      GTextOverflowModeTrailingEllipsis, align, NULL);
+    y += clock_slot;
+  }
 
   // Vehicle name (or "Status").
   graphics_context_set_text_color(gctx, fg);
@@ -436,9 +463,10 @@ static void card_update_proc(Layer *layer, GContext *gctx) {
   y += range_slot;
 
   // Art-glass ornament band: the compression point before the status rows.
-  // Skipped on round, where the circle has no room for it.
+  // Skipped on round (no room) and when the clock is shown (its row reclaims
+  // the band's space on the short screens).
 #if !defined(PBL_ROUND)
-  draw_ornament(gctx, content.origin.x + content.size.w / 2, y + 5, content.size.w);
+  if (!s_show_clock) draw_ornament(gctx, content.origin.x + content.size.w / 2, y + 5, content.size.w);
 #endif
   y += orn_slot;
 
@@ -784,6 +812,11 @@ static void inbox_received(DictionaryIterator *it, void *ctx) {
   if ((t = dict_find(it, KEY_CHARGE_LIMIT))) { s_charge_limit = t->value->int32; got_state = true; }
   if ((t = dict_find(it, KEY_CHARGE_TIME)))  { s_charge_eta = t->value->int32; got_state = true; }
   if ((t = dict_find(it, KEY_DIST_UNIT)))    { s_dist_km = t->value->int32 != 0; got_state = true; }
+  if ((t = dict_find(it, KEY_SHOW_CLOCK))) {
+    bool v = t->value->int32 != 0;
+    if (v != s_show_clock) { s_show_clock = v; update_clock_subscription(); }
+    got_state = true;
+  }
 
   if (got_state) {
     save_state();                                     // cache for the next cold launch
@@ -823,6 +856,26 @@ static void outbox_sent(DictionaryIterator *it, void *ctx) {
 static void connection_handler(bool connected) {
   s_connected = connected;
   if (s_card_layer) layer_mark_dirty(s_card_layer);
+}
+
+// ---------------------------------------------------------------------------
+// Clock tick
+//
+// The card reads the watch clock at draw time; this just nudges a redraw each
+// minute so the displayed time stays current while the app is left open. We
+// only subscribe while the clock is actually shown, to avoid waking the app
+// every minute when the option is off.
+// ---------------------------------------------------------------------------
+static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
+  if (s_card_layer) layer_mark_dirty(s_card_layer);
+}
+
+static void update_clock_subscription(void) {
+  if (s_show_clock) {
+    tick_timer_service_subscribe(MINUTE_UNIT, tick_handler);
+  } else {
+    tick_timer_service_unsubscribe();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -910,6 +963,7 @@ static void main_window_unload(Window *w) {
 static void init(void) {
   load_icons();
   load_state();   // show last-known values immediately, before the first refresh
+  update_clock_subscription();  // start ticking if the cached setting wants the clock
 
   s_main_window = window_create();
   window_set_window_handlers(s_main_window, (WindowHandlers){
