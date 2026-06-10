@@ -438,7 +438,7 @@ static void card_update_proc(Layer *layer, GContext *gctx) {
     graphics_context_set_text_color(gctx, fg);
     graphics_draw_text(gctx, tstr, f_body,
       GRect(content.origin.x, y, content.size.w, clock_slot),
-      GTextOverflowModeTrailingEllipsis, align, NULL);
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
     y += clock_slot;
   }
 
