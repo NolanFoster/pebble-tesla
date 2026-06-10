@@ -47,7 +47,11 @@ static bool     s_dark_fg     = false;          // accent is light -> draw fg in
 // ---- UI ----
 static Window         *s_main_window;
 static Layer          *s_card_layer;     // custom-drawn status "card" (left of action bar)
-static ActionBarLayer *s_action_bar;     // lock (up) / settings (select) / climate (down)
+static Layer          *s_action_bar;     // lock (up) / settings (select) / climate (down)
+// Bitmaps + accent currently shown on the custom action bar; the update_proc
+// reads these. update_action_bar_icons()/apply_theme() set them then mark dirty.
+static GBitmap        *s_ab_up, *s_ab_select, *s_ab_down;
+static GColor          s_ab_accent = ACCENT_COLOR;  // init so the first paint is sane
 static GBitmap        *s_icon_locked, *s_icon_unlocked, *s_icon_settings;
 static GBitmap        *s_icon_climate_on, *s_icon_climate_off;
 // Dark (black-glyph) variants of the action-bar icons, used on light accents
@@ -241,6 +245,13 @@ static void animate_battery_to(int to) {
 // Cherokee-Red signature accent — the single action color (action bar, menu
 // highlight). On 1-bit displays there is no accent (handled at call sites).
 #define ACCENT_COLOR PBL_IF_COLOR_ELSE(GColorRoseVale, GColorWhite)
+
+// Custom action bar geometry. Wider than the stock ACTION_BAR_WIDTH (~30 rect /
+// ~20 round) so the larger glyphs have breathing room. The top/down glyphs sit
+// AB_ICON_EDGE_PAD from the screen edge; on round we keep a bigger pad so the
+// corner icons stay inside the visible disc.
+#define AB_WIDTH          PBL_IF_ROUND_ELSE(34, 36)
+#define AB_ICON_EDGE_PAD  PBL_IF_ROUND_ELSE(22, 2)
 
 #if defined(PBL_COLOR)
 // Battery arc: vibrant red -> yellow -> green, the most saturated colors in the
@@ -516,6 +527,37 @@ static void card_update_proc(Layer *layer, GContext *gctx) {
 // ---------------------------------------------------------------------------
 // Action bar (lock = up, settings = select, climate = down)
 // ---------------------------------------------------------------------------
+// Draw one centered icon at vertical position y within the bar bounds.
+static void ab_draw_icon(GContext *ctx, GRect b, GBitmap *icon, int16_t y) {
+  if (!icon) return;
+  GRect r = gbitmap_get_bounds(icon);
+  int16_t x = b.origin.x + (b.size.w - r.size.w) / 2;
+  graphics_draw_bitmap_in_rect(ctx, icon, GRect(x, y, r.size.w, r.size.h));
+}
+
+// Custom action bar: fill with the accent color, then draw the up/select/down
+// glyphs ourselves so we control the column width and pin the up/down icons to
+// the screen edges (the stock ActionBarLayer allowed neither).
+static void action_bar_update_proc(Layer *layer, GContext *ctx) {
+  GRect b = layer_get_bounds(layer);
+  graphics_context_set_fill_color(ctx, s_ab_accent);
+  graphics_fill_rect(ctx, b, 0, GCornerNone);
+
+  // Honor the transparent PNG alpha so clear pixels show the accent fill.
+  graphics_context_set_compositing_mode(ctx, PBL_IF_COLOR_ELSE(GCompOpSet, GCompOpAssign));
+
+  ab_draw_icon(ctx, b, s_ab_up, b.origin.y + AB_ICON_EDGE_PAD);
+  if (s_ab_select) {
+    GRect r = gbitmap_get_bounds(s_ab_select);
+    ab_draw_icon(ctx, b, s_ab_select, b.origin.y + (b.size.h - r.size.h) / 2);
+  }
+  if (s_ab_down) {
+    GRect r = gbitmap_get_bounds(s_ab_down);
+    ab_draw_icon(ctx, b, s_ab_down,
+                 b.origin.y + b.size.h - r.size.h - AB_ICON_EDGE_PAD);
+  }
+}
+
 static void ab_up_click(ClickRecognizerRef rec, void *ctx) {
   VehicleState st = current_state();
   send_command(lock_toggle_cmd(&st), 0);
@@ -554,9 +596,10 @@ static void update_action_bar_icons(void) {
                                                             : i_unlocked;
   GBitmap *down = (climate_toggle_icon(&st) == ICON_KIND_CLIMATE_ON) ? i_climate_on
                                                                      : i_climate_off;
-  action_bar_layer_set_icon(s_action_bar, BUTTON_ID_UP, up);
-  action_bar_layer_set_icon(s_action_bar, BUTTON_ID_SELECT, i_settings);
-  action_bar_layer_set_icon(s_action_bar, BUTTON_ID_DOWN, down);
+  s_ab_up     = up;
+  s_ab_select = i_settings;
+  s_ab_down   = down;
+  layer_mark_dirty(s_action_bar);
 }
 
 // ---------------------------------------------------------------------------
@@ -587,14 +630,15 @@ static GColor theme_fg(const Theme *t) {
 static void apply_theme(void) {
   Theme th = theme_for_paint(s_paint);
   s_dark_fg = th.dark_fg;
-  if (s_action_bar) action_bar_layer_set_background_color(s_action_bar, th.accent);
+  s_ab_accent = th.accent;
+  if (s_action_bar) layer_mark_dirty(s_action_bar);
   update_action_bar_icons();  // picks the glyph polarity that matches s_dark_fg
   if (s_controls_menu)
     menu_layer_set_highlight_colors(s_controls_menu, th.accent, theme_fg(&th));
 }
 #else
 // Monochrome platforms keep their fixed black/white scheme.
-static void apply_theme(void) { update_action_bar_icons(); }
+static void apply_theme(void) { s_ab_accent = GColorWhite; update_action_bar_icons(); }
 #endif
 
 // ---------------------------------------------------------------------------
@@ -941,20 +985,24 @@ static void main_window_load(Window *w) {
   // displays). On round the action bar overlaps the edge, so use full bounds.
   GRect card = PBL_IF_ROUND_ELSE(
     b,
-    GRect(b.origin.x, b.origin.y, b.size.w - ACTION_BAR_WIDTH, b.size.h));
+    GRect(b.origin.x, b.origin.y, b.size.w - AB_WIDTH, b.size.h));
   s_card_layer = layer_create(card);
   layer_set_update_proc(s_card_layer, card_update_proc);
   layer_add_child(root, s_card_layer);
 
-  s_action_bar = action_bar_layer_create();
-  action_bar_layer_set_click_config_provider(s_action_bar, action_bar_click_config);
-  action_bar_layer_add_to_window(s_action_bar, w);
+  // Custom action bar pinned to the right edge (replaces the stock ActionBarLayer
+  // so we control width, icon size, and the top/bottom edge alignment).
+  GRect ab = GRect(b.size.w - AB_WIDTH, b.origin.y, AB_WIDTH, b.size.h);
+  s_action_bar = layer_create(ab);
+  layer_set_update_proc(s_action_bar, action_bar_update_proc);
+  layer_add_child(root, s_action_bar);
+  window_set_click_config_provider(w, action_bar_click_config);
   apply_theme();  // accent bg + icon polarity for the current paint (defaults to ACCENT_COLOR)
 }
 
 static void main_window_unload(Window *w) {
   animation_unschedule_all();
-  action_bar_layer_destroy(s_action_bar);
+  layer_destroy(s_action_bar);
   s_action_bar = NULL;
   layer_destroy(s_card_layer);
   s_card_layer = NULL;
