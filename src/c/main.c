@@ -51,7 +51,7 @@ static Layer          *s_action_bar;     // lock (up) / settings (select) / clim
 // Bitmaps + accent currently shown on the custom action bar; the update_proc
 // reads these. update_action_bar_icons()/apply_theme() set them then mark dirty.
 static GBitmap        *s_ab_up, *s_ab_select, *s_ab_down;
-static GColor          s_ab_accent = ACCENT_COLOR;  // init so the first paint is sane
+static GColor          s_ab_accent;      // accent bg; set by apply_theme() before the first paint
 static GBitmap        *s_icon_locked, *s_icon_unlocked, *s_icon_settings;
 static GBitmap        *s_icon_climate_on, *s_icon_climate_off;
 // Dark (black-glyph) variants of the action-bar icons, used on light accents
