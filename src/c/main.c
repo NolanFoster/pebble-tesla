@@ -251,7 +251,7 @@ static void animate_battery_to(int to) {
 // AB_ICON_EDGE_PAD from the screen edge; on round we keep a bigger pad so the
 // corner icons stay inside the visible disc.
 #define AB_WIDTH          PBL_IF_ROUND_ELSE(34, 36)
-#define AB_ICON_EDGE_PAD  PBL_IF_ROUND_ELSE(22, 2)
+#define AB_ICON_EDGE_PAD  PBL_IF_ROUND_ELSE(22, 6)
 
 #if defined(PBL_COLOR)
 // Battery arc: vibrant red -> yellow -> green, the most saturated colors in the
